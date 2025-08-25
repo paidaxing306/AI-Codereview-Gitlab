@@ -76,14 +76,17 @@ class CallChainAnalysisService:
 
             # 3. 解析变更的方法签名产生{workspace/project/2_changed_methods.json}
             changed_methods_file = extract_changed_method_signatures_static(changes, project_info['name'],
-                                                                            self.workspace_path)
+                                                                            self.workspace_path,analysis_result_file)
             if not changed_methods_file:
                 logger.info("未发现变更的方法签名，跳过调用链分析")
                 return None
 
             # 3.1 plugin PMD代码检查产生{workspace/project_tmp/plugin_pmd_report_enhanced.json}
+            # 从changes中提取Java文件路径，只对变更的文件进行PMD检查
+            java_files_to_check = self._extract_java_files_from_changes(changes, project_info['path'])
+            
             pmd_report_file = run_pmd_check_static(project_info['path'], project_info['name'], self.workspace_path,
-                                                   self.plugin_path)
+                                                   self.plugin_path, java_files_to_check)
             if pmd_report_file:
                 logger.info(f"PMD代码检查完成，报告文件: {pmd_report_file}")
                 
@@ -93,7 +96,7 @@ class CallChainAnalysisService:
             else:
                 logger.warn("PMD代码检查失败，但不会影响后续调用链分析步骤，继续执行")
 
-
+            
             # 实现3.2步骤：过滤PMD已检查的方法签名
             filtered_changed_methods_file = self._filter_pmd_checked_methods(
                 pmd_report_file, changed_methods_file, project_info['name']
@@ -132,6 +135,38 @@ class CallChainAnalysisService:
         except Exception as e:
             logger.error(f"调用链分析过程中发生错误: {str(e)}")
             return None
+
+    def _extract_java_files_from_changes(self, changes: list, project_path: str) -> List[str]:
+        """
+        从changes中提取Java文件路径
+        
+        Args:
+            changes: 代码变更列表
+            project_path: 项目根目录路径
+            
+        Returns:
+            Java文件路径列表
+        """
+        java_files = []
+        
+        for change in changes:
+            if isinstance(change, dict):
+                new_path = change.get('new_path', '')
+                
+                # 只处理Java文件
+                if new_path.endswith('.java'):
+                    # 构建完整的文件路径
+                    full_path = os.path.join(project_path, new_path)
+                    
+                    # 检查文件是否存在
+                    if os.path.exists(full_path):
+                        java_files.append(full_path)
+                        logger.info(f"添加Java文件到PMD检查列表: {full_path}")
+                    else:
+                        logger.warn(f"Java文件不存在，跳过PMD检查: {full_path}")
+        
+        logger.info(f"从changes中提取到 {len(java_files)} 个Java文件进行PMD检查")
+        return java_files
 
     def _clone_or_update_project(self, webhook_data: dict, github_token: str) -> Optional[Dict]:
         """
@@ -310,7 +345,7 @@ class CallChainAnalysisService:
             source_branch = webhook_data.get('object_attributes', {}).get('source_branch', 'master')
             
             # 格式化PMD报告为Markdown表格
-            markdown_table = PMDReportFormatter.format_pmd_report_static(pmd_report_file, source_branch)
+            markdown_table = PMDReportFormatter.format_pmd_report_static(pmd_report_file, source_branch, webhook_data)
             
             if markdown_table:
                 # 添加标题和说明

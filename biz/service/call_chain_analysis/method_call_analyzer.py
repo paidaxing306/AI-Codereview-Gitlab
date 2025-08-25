@@ -97,7 +97,7 @@ class MethodCallAnalyzer:
     
  
     
-    def get_method_call_chain_by_depth(self, method_signature: str, max_depth: int = 3) -> Dict[int, List[str]]:
+    def get_method_call_chain_by_depth(self, method_signature: str, max_depth: int = 1) -> Dict[int, List[str]]:
         """
         按深度分层获取方法调用链
         
@@ -274,7 +274,7 @@ def analyze_method_calls_static(changed_methods_file: str, analysis_file: str, p
                     # max_calls_in=3: 分析调用该方法的方法，最多分析3层高度
                     relationship = analyzer.get_complete_method_relationship(
                         method_signature=method_signature,
-                        max_calls_out=1,
+                        max_calls_out=0,
                         max_calls_in=2
                     )
                     

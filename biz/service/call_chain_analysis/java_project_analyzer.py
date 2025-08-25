@@ -1,12 +1,12 @@
+import json
 import os
 import re
-import json
 import time
-from typing import Dict, List,  Tuple, Optional
 from dataclasses import dataclass, asdict
+from typing import Dict, List, Tuple, Optional
 
-from biz.utils.log import logger
 from biz.service.call_chain_analysis.file_util import FileUtil
+from biz.utils.log import logger
 
 
 @dataclass
@@ -38,6 +38,22 @@ class JavaProjectAnalyzer:
         self.method_signatures: Dict[str, MethodSignature] = {}
         self.field_signatures: Dict[str, FieldSignature] = {}
         
+        # 方法名索引，用于快速查找方法调用
+        self.method_name_index: Dict[str, List[str]] = {}
+        
+        # Java关键字和系统类，用于排除误判的方法调用
+        self.java_keywords = {
+            'if', 'for', 'while', 'switch', 'return', 'new', 'super', 'this', 'System', 'List', 'Optional', 'out', 'isPresent', 'get',
+            'set', 'add', 'remove', 'contains', 'size', 'isEmpty', 'clear', 'iterator', 'toString', 'equals', 'hashCode',
+            'clone', 'finalize', 'wait', 'notify', 'notifyAll', 'getClass', 'print', 'println', 'printf', 'format',
+            'parse', 'valueOf', 'substring', 'length', 'charAt', 'indexOf', 'lastIndexOf', 'replace', 'split',
+            'trim', 'toLowerCase', 'toUpperCase', 'startsWith', 'endsWith', 'contains', 'matches', 'replaceAll',
+            'append', 'insert', 'delete', 'reverse', 'capacity', 'ensureCapacity', 'setLength', 'charAt',
+            'put', 'get', 'remove', 'containsKey', 'containsValue', 'keySet', 'values', 'entrySet', 'clear',
+            'add', 'offer', 'poll', 'peek', 'element', 'remove', 'contains', 'size', 'isEmpty', 'clear',
+            'push', 'pop', 'peek', 'empty', 'search', 'capacity', 'trimToSize', 'ensureCapacity'
+        }
+        
         # 预编译正则表达式以提高性能
         self._method_pattern = re.compile(
             r'(?:@\w+(?:\s*\([^)]*\))?\s*\n\s*)*(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?[\w<>\[\]]+\s+\w+\s*\([^)]*\)\s*\{',
@@ -52,9 +68,21 @@ class JavaProjectAnalyzer:
         self._class_pattern = re.compile(r'(?:public\s+)?(?:abstract\s+)?(?:final\s+)?class\s+(\w+)(?:\s+extends\s+[^{]+)?(?:\s+implements\s+[^{]+)?\s*\{')
         self._class_pattern_simple = re.compile(r'(?:public\s+)?(?:abstract\s+)?(?:final\s+)?class\s+\w+(?:\s+extends\s+[^{]+)?(?:\s+implements\s+[^{]+)?\s*\{')
         
-        # 字段匹配
+        # 字段匹配 - 优化版本
         self._field_pattern = re.compile(r'(?:private|public|protected)?\s*(?:static\s+)?(?:final\s+)?[\w<>\[\]]+\s+\w+\s*[=;]')
         self._field_name_pattern = re.compile(r'[\w<>\[\]]+\s+(\w+)\s*[=;]')
+        
+        # 类级别字段匹配 - 更精确的模式
+        self._class_level_field_pattern = re.compile(
+            r'(?:^|\n)\s*'  # 行首或换行后的空白
+            r'(?:@\w+(?:\s*\([^)]*\))?\s*\n\s*)*'  # 注解
+            r'(?:public|private|protected)?\s*'  # 访问修饰符
+            r'(?:static\s+)?(?:final\s+)?'  # static/final修饰符
+            r'[\w<>\[\]]+\s+'  # 类型
+            r'(\w+)\s*'  # 字段名
+            r'(?:=\s*[^;]*)?\s*;',  # 可选的初始化和分号
+            re.MULTILINE
+        )
         
         # 方法签名匹配
         self._method_signature_pattern = re.compile(r'((?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?[\w<>\[\]]+\s+\w+\s*\([^)]*\))')
@@ -95,21 +123,37 @@ class JavaProjectAnalyzer:
         
         # 保存项目根目录路径，用于计算相对路径
         self.project_path = project_path
-        
+
+        start_time = time.time()
+
         # 遍历项目目录，找到所有.java文件
         for root, dirs, files in os.walk(project_path):
             for file in files:
                 if file.endswith('.java'):
                     file_path = os.path.join(root, file)
                     self._analyze_java_file(file_path)
+        field_analysis_time = time.time() - start_time
+
+        logger.info(
+            f"分析类 _analyze_java_file ，耗时: {field_analysis_time:.3f}秒")
+
+        # 构建方法名索引，用于快速查找方法调用
+        self._build_method_name_index()
         
         # 分析所有方法之间的调用关系
+        start_time = time.time()
+        method_count = 0
         for method_sig_name, method_sig in self.method_signatures.items():
             # 分析方法中调用的其他方法
-            used_methods = self._analyze_method_method_usage(method_sig.method_source_code, self.method_signatures)
+            used_methods = self._analyze_method_method_usage(method_sig.method_source_code)
             
             # 更新MethodSignature中的usage_method_signature_name
             method_sig.usage_method_signature_name = used_methods
+            method_count += 1
+        
+        method_analysis_time = time.time() - start_time
+        if method_analysis_time > 1.0:
+            logger.info(f"方法调用关系分析完成，耗时: {method_analysis_time:.3f}秒，分析方法数量: {method_count}")
         
         return self.class_signatures, self.method_signatures, self.field_signatures
 
@@ -172,18 +216,35 @@ class JavaProjectAnalyzer:
         class_content_with_comments = self._extract_class_content_with_comments(content, class_start)
         
         # 分析字段
+        start_time = time.time()
         field_names = self._analyze_class_fields(class_content_with_comments, class_signature_name)
+        field_analysis_time = time.time() - start_time
+        if field_analysis_time > 0.5:
+            logger.info(f"分析类 {class_signature_name} 字段完成，耗时: {field_analysis_time:.3f}秒，字段数量: {len(field_names)}")
         
         # 分析方法
+        start_time = time.time()
         method_names = self._analyze_class_methods(class_content_with_comments, class_signature_name, field_names)
+        method_analysis_time = time.time() - start_time
+        if method_analysis_time > 0.5:
+            logger.info(f"分析类 {class_signature_name} 方法完成，耗时: {method_analysis_time:.3f}秒，方法数量: {len(method_names)}")
         
         # 创建类签名
+        start_time = time.time()
         self._create_class_signature(class_content_with_comments, class_signature_name, field_names, method_names, file_info['class_path'])
+        signature_creation_time = time.time() - start_time
+        if signature_creation_time > 0.5:
+            logger.info(f"创建类 {class_signature_name} 签名完成，耗时: {signature_creation_time:.3f}秒")
 
     def _analyze_class_fields(self, class_content: str, class_signature_name: str) -> List[str]:
         """分析类中的字段"""
+        start_time = time.time()
+        
         fields = self._extract_fields(class_content)
+        extract_time = time.time() - start_time
+        
         field_names = []
+        process_start_time = time.time()
         
         for field in fields:
             # 从字段代码中提取字段名
@@ -196,6 +257,12 @@ class JavaProjectAnalyzer:
                 field_signature_name=field_signature_name,
                 field_source_code=self.format_java_code(field.strip())
             )
+        
+        process_time = time.time() - process_start_time
+        total_time = time.time() - start_time
+        
+        if total_time > 0.5:
+            logger.info(f"分析类 {class_signature_name} 字段耗时过长 - 总耗时: {total_time:.3f}秒，提取字段: {extract_time:.3f}秒，处理字段: {process_time:.3f}秒，字段数量: {len(field_names)}")
         
         return field_names
 
@@ -385,15 +452,63 @@ class JavaProjectAnalyzer:
         """提取类中的字段定义"""
         fields = []
         
-        # 找到所有字段定义
-        field_matches = self._field_pattern.finditer(class_content)
+        # 首先分析方法的位置，创建排除区域
+        method_regions = self._get_method_regions(class_content)
+        
+        # 使用预编译的正则表达式找到所有可能的字段定义
+        field_matches = self._class_level_field_pattern.finditer(class_content)
+        
         for match in field_matches:
-            field_line = match.group(0)
-            # 确保这是字段而不是方法参数或局部变量
-            if self._is_field_definition(field_line, class_content, match.start()):
-                fields.append(field_line)
+            field_start = match.start()
+            field_text = match.group(0)
+            
+            # 检查字段是否在任何方法区域内
+            if not self._is_in_method_region(field_start, method_regions):
+                fields.append(field_text)
         
         return fields
+    
+    def _get_method_regions(self, class_content: str) -> List[Tuple[int, int]]:
+        """获取所有方法的位置区域"""
+        method_regions = []
+        method_matches = self._method_pattern.finditer(class_content)
+        
+        for match in method_matches:
+            method_start = match.start()
+            method_end = self._find_method_end(class_content, method_start)
+            if method_end > method_start:
+                method_regions.append((method_start, method_end))
+        
+        return method_regions
+    
+    def _find_method_end(self, content: str, method_start: int) -> int:
+        """找到方法的结束位置"""
+        brace_count = 0
+        start_brace = False
+        
+        for i in range(method_start, len(content)):
+            char = content[i]
+            if char == '{':
+                if not start_brace:
+                    start_brace = True
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if start_brace and brace_count == 0:
+                    return i + 1
+        
+        return method_start
+    
+    def _is_in_method_region(self, position: int, method_regions: List[Tuple[int, int]]) -> bool:
+        """检查位置是否在方法区域内"""
+        for start, end in method_regions:
+            if start <= position <= end:
+                return True
+        return False
+    
+
+    
+
 
 
 
@@ -585,21 +700,7 @@ class JavaProjectAnalyzer:
 
     
 
-    def _is_field_definition(self, field_line: str, class_content: str, field_start: int) -> bool:
-        """判断是否为字段定义（而不是方法参数或局部变量）"""
-        # 检查是否在方法内部
-        before_content = class_content[:field_start]
-        
-        # 计算大括号数量，判断是否在方法内部
-        brace_count = 0
-        for char in before_content:
-            if char == '{':
-                brace_count += 1
-            elif char == '}':
-                brace_count -= 1
-        
-        # 如果大括号数量为1，说明在类级别，是字段定义
-        return brace_count == 1
+
     
 
 
@@ -620,7 +721,7 @@ class JavaProjectAnalyzer:
         
         return used_fields
     
-    def _analyze_method_method_usage(self, method_code: str, all_methods: Dict[str, MethodSignature]) -> List[str]:
+    def _analyze_method_method_usage(self, method_code: str) -> List[str]:
         """分析方法中调用的其他方法"""
         used_methods = []
         
@@ -630,27 +731,35 @@ class JavaProjectAnalyzer:
         # 处理对象方法调用
         for obj_name, method_name in method_calls:
             # 排除Java关键字和系统类
-            java_keywords = {'if', 'for', 'while', 'switch', 'return', 'new', 'super', 'this', 'System', 'List', 'Optional', 'out', 'isPresent', 'get'}
-            if method_name in java_keywords:
+            if method_name in self.java_keywords:
                 continue
                 
-            # 查找匹配的方法签名
-            for method_sig_name, method_sig in all_methods.items():
-                # 提取方法名（现在格式是：methodName(type1, type2)）
-                method_part = method_sig_name.split('.')[-1]
-                # 匹配方法名：methodName(type1, type2) -> methodName
-                method_name_match = self._method_name_pattern.search(method_part)
-                if method_name_match:
-                    sig_method_name = method_name_match.group(1)
-                else:
-                    sig_method_name = method_part.split('(')[0]
-                
-                # 检查方法名是否匹配
-                if sig_method_name == method_name:
-                    used_methods.append(method_sig_name)
+            # 直接从索引中查找匹配的方法签名
+            if method_name in self.method_name_index:
+                used_methods.extend(self.method_name_index[method_name])
         
         return list(set(used_methods))  # 去重
     
+    def _build_method_name_index(self):
+        """构建方法名到方法签名的索引"""
+        self.method_name_index.clear()
+        
+        for method_sig_name in self.method_signatures.keys():
+            # 提取方法名（现在格式是：methodName(type1, type2)）
+            method_part = method_sig_name.split('.')[-1]
+            # 匹配方法名：methodName(type1, type2) -> methodName
+            method_name_match = self._method_name_pattern.search(method_part)
+            if method_name_match:
+                method_name = method_name_match.group(1)
+            else:
+                method_name = method_part.split('(')[0]
+            
+            # 将方法签名添加到对应的方法名列表中
+            if method_name not in self.method_name_index:
+                self.method_name_index[method_name] = []
+            self.method_name_index[method_name].append(method_sig_name)
+
+
 def analyze_java_project(project_path: str) -> Tuple[Dict[str, ClassSignature], 
                                                     Dict[str, MethodSignature], 
                                                     Dict[str, FieldSignature]]:
@@ -690,6 +799,12 @@ def save_and_analysis_to_json(project_path: str, output_file: str = "1_analyze_p
         "field_signatures": {name: asdict(sig) for name, sig in field_sigs.items()}
     }
     
+    # 确保输出目录存在
+    output_dir = os.path.dirname(output_file)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"创建输出目录: {output_dir}")
+    
     # 写入JSON文件
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(analysis_result, f, ensure_ascii=False, indent=2)
@@ -725,14 +840,26 @@ def analyze_java_project_static(project_info: dict, workspace_path: str = None) 
         logger.info(f"开始分析Java项目: {project_path}")
         
         # 使用java_project_analyzer分析项目
-        analysis_result = save_and_analysis_to_json(project_path, output_file)
+        class_sigs, method_sigs, field_sigs = analyze_java_project(project_path)
+        
+        # 将分析结果合并为一个字典
+        analysis_result = {
+            "class_signatures": {name: asdict(sig) for name, sig in class_sigs.items()},
+            "method_signatures": {name: asdict(sig) for name, sig in method_sigs.items()},
+            "field_signatures": {name: asdict(sig) for name, sig in field_sigs.items()}
+        }
+        
+        # 使用FileUtil保存结果，它会自动创建目录
+        if not FileUtil.save_json_to_file(analysis_result, output_file):
+            logger.error(f"保存分析结果失败: {output_file}")
+            return None
         
         analysis_duration = time.time() - start_time
         logger.info(f"Java项目分析完成，耗时: {analysis_duration:.2f}秒")
         logger.info(f"结果保存到: {output_file}")
-        logger.info(f"分析统计 - 类数量: {len(analysis_result.get('class_signatures', {}))}")
-        logger.info(f"分析统计 - 方法数量: {len(analysis_result.get('method_signatures', {}))}")
-        logger.info(f"分析统计 - 字段数量: {len(analysis_result.get('field_signatures', {}))}")
+        logger.info(f"分析统计 - 类数量: {len(class_sigs)}")
+        logger.info(f"分析统计 - 方法数量: {len(method_sigs)}")
+        logger.info(f"分析统计 - 字段数量: {len(field_sigs)}")
         
         return output_file
 

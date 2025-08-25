@@ -12,13 +12,14 @@ class PMDReportFormatter:
     """
 
     @staticmethod
-    def format_pmd_report_to_markdown_table(pmd_report_file: str, branch_name: str = 'master') -> Optional[str]:
+    def format_pmd_report_to_markdown_table(pmd_report_file: str, branch_name: str = 'master', webhook_data: dict = None) -> Optional[str]:
         """
         将PMD报告文件格式化为Markdown表格
 
         Args:
             pmd_report_file: PMD报告文件路径
             branch_name: 分支名称，默认为master
+            webhook_data: GitLab webhook数据，用于获取GitLab URL信息
 
         Returns:
             格式化后的Markdown表格字符串，失败时返回None
@@ -36,7 +37,7 @@ class PMDReportFormatter:
                 return None
 
             # 生成Markdown表格
-            markdown_table = PMDReportFormatter._generate_markdown_table(pmd_report_data['files'], branch_name)
+            markdown_table = PMDReportFormatter._generate_markdown_table(pmd_report_data['files'], branch_name, webhook_data)
             
             if markdown_table:
                 logger.info("PMD报告已成功格式化为Markdown表格")
@@ -50,13 +51,14 @@ class PMDReportFormatter:
             return None
 
     @staticmethod
-    def _generate_markdown_table(files_data: List[Dict], branch_name: str = 'master') -> Optional[str]:
+    def _generate_markdown_table(files_data: List[Dict], branch_name: str = 'master', webhook_data: dict = None) -> Optional[str]:
         """
         生成Markdown表格
 
         Args:
             files_data: 文件数据列表
             branch_name: 分支名称，默认为master
+            webhook_data: GitLab webhook数据，用于获取GitLab URL信息
 
         Returns:
             Markdown表格字符串
@@ -80,7 +82,7 @@ class PMDReportFormatter:
                     priority = violation.get('priority', 0)
                     
                     # 格式化文件名，包含代码位置
-                    formatted_filename = PMDReportFormatter._format_filename_with_location(filename, beginline, endline, branch_name)
+                    formatted_filename = PMDReportFormatter._format_filename_with_location(filename, beginline, endline, branch_name, webhook_data)
                     
                     # 格式化优先级
                     priority_text = PMDReportFormatter._format_priority(priority)
@@ -115,7 +117,7 @@ class PMDReportFormatter:
             return None
 
     @staticmethod
-    def _format_filename_with_location(absolute_filename: str, beginline: int, endline: int, branch_name: str = 'master') -> str:
+    def _format_filename_with_location(absolute_filename: str, beginline: int, endline: int, branch_name: str = 'master', webhook_data: dict = None) -> str:
         """
         格式化文件名为 [文件名:行号范围](GitLab URL) 格式
 
@@ -124,6 +126,7 @@ class PMDReportFormatter:
             beginline: 开始行号
             endline: 结束行号
             branch_name: 分支名称，默认为master
+            webhook_data: GitLab webhook数据，用于获取GitLab URL信息
 
         Returns:
             格式化的文件名字符串
@@ -133,7 +136,7 @@ class PMDReportFormatter:
             file_name = os.path.basename(absolute_filename)
             
             # 转换为GitLab URL格式
-            gitlab_url = PMDReportFormatter._convert_to_gitlab_url(absolute_filename, branch_name)
+            gitlab_url = PMDReportFormatter._convert_to_gitlab_url(absolute_filename, branch_name, webhook_data)
             
             # 格式化代码位置
             if beginline == endline:
@@ -149,12 +152,13 @@ class PMDReportFormatter:
             return os.path.basename(absolute_filename)
 
     @staticmethod
-    def _format_filename_with_path(absolute_filename: str) -> str:
+    def _format_filename_with_path(absolute_filename: str, webhook_data: dict = None) -> str:
         """
         格式化文件名为 [文件名](GitLab URL) 格式
 
         Args:
             absolute_filename: 绝对文件路径
+            webhook_data: GitLab webhook数据，用于获取GitLab URL信息
 
         Returns:
             格式化的文件名字符串
@@ -164,7 +168,7 @@ class PMDReportFormatter:
             file_name = os.path.basename(absolute_filename)
             
             # 转换为GitLab URL格式
-            gitlab_url = PMDReportFormatter._convert_to_gitlab_url(absolute_filename)
+            gitlab_url = PMDReportFormatter._convert_to_gitlab_url(absolute_filename, 'master', webhook_data)
             
             # 格式化为 [文件名](GitLab URL) 格式
             return f"[{file_name}]({gitlab_url})"
@@ -174,13 +178,14 @@ class PMDReportFormatter:
             return os.path.basename(absolute_filename)
 
     @staticmethod
-    def _convert_to_gitlab_url(absolute_filename: str, branch_name: str = 'master') -> str:
+    def _convert_to_gitlab_url(absolute_filename: str, branch_name: str = 'master', webhook_data: dict = None) -> str:
         """
         将绝对文件路径转换为GitLab URL
 
         Args:
             absolute_filename: 绝对文件路径
             branch_name: 分支名称，默认为master
+            webhook_data: GitLab webhook数据，用于获取GitLab URL信息
 
         Returns:
             GitLab URL字符串
@@ -207,11 +212,39 @@ class PMDReportFormatter:
             # 剩余部分是文件路径
             file_path = '/'.join(path_parts[1:])
             
-            # 构建GitLab URL
-            # 格式: https://git.qncentury.com/qnvip-ai/{project_name}/-/blob/{branch_name}/{file_path}
-            gitlab_url = f"https://git.qncentury.com/qnvip-ai/{project_name}/-/blob/{branch_name}/{file_path}"
+            # 从webhook_data中获取GitLab URL信息
+            if webhook_data and 'project' in webhook_data:
+                project_info = webhook_data['project']
+                # 使用web_url作为基础URL
+                web_url = project_info.get('web_url', '')
+                if web_url:
+                    # 从web_url中提取基础URL
+                    if web_url.endswith('/'):
+                        base_url = web_url[:-1]  # 去掉末尾的斜杠
+                    else:
+                        base_url = web_url
+                    
+                    # 构建GitLab URL
+                    gitlab_url = f"{base_url}/-/blob/{branch_name}/{file_path}"
+                    return gitlab_url
             
-            return gitlab_url
+            # 如果没有webhook_data或无法获取URL，使用默认格式
+            # 从webhook_data中尝试获取域名信息
+            if webhook_data and 'project' in webhook_data:
+                project_info = webhook_data['project']
+                git_http_url = project_info.get('git_http_url', '')
+                if git_http_url:
+                    # 从git_http_url中提取域名和路径
+                    # 格式: http://git.qncentury.com/qnvip-business-front/qnvip-rent-group/qnvip-rent-unite-group.git
+                    if git_http_url.endswith('.git'):
+                        git_http_url = git_http_url[:-4]  # 去掉.git后缀
+                    
+                    # 构建GitLab URL
+                    gitlab_url = f"{git_http_url}/-/blob/{branch_name}/{file_path}"
+                    return gitlab_url
+   
+ 
+            return "null"
             
         except Exception as e:
             logger.warn(f"转换GitLab URL时发生错误: {str(e)}")
@@ -303,15 +336,16 @@ class PMDReportFormatter:
         return priority_map.get(priority, f"未知({priority})")
 
     @staticmethod
-    def format_pmd_report_static(pmd_report_file: str, branch_name: str = 'master') -> Optional[str]:
+    def format_pmd_report_static(pmd_report_file: str, branch_name: str = 'master', webhook_data: dict = None) -> Optional[str]:
         """
         静态方法：格式化PMD报告文件
 
         Args:
             pmd_report_file: PMD报告文件路径
             branch_name: 分支名称，默认为master
+            webhook_data: GitLab webhook数据，用于获取GitLab URL信息
 
         Returns:
             格式化后的Markdown表格字符串，失败时返回None
         """
-        return PMDReportFormatter.format_pmd_report_to_markdown_table(pmd_report_file, branch_name) 
+        return PMDReportFormatter.format_pmd_report_to_markdown_table(pmd_report_file, branch_name, webhook_data) 

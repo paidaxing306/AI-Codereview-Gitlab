@@ -135,7 +135,7 @@ def add_method_signatures_to_report(report_data: Dict) -> Dict:
     return report_data
 
 
-def run_pmd_check(project_path, output_file=None, plugin_path=None):
+def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_check=None):
     """
     运行PMD代码检查并生成报告
 
@@ -143,6 +143,7 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None):
         project_path: 项目根目录路径
         output_file: 输出文件完整路径，如果为None则不保存文件
         plugin_path: 插件路径，如果为None则使用默认路径
+        files_to_check: 要检查的文件列表，如果为None则检查整个项目
         
     返回:
         成功时返回报告数据字典，失败时返回None
@@ -182,12 +183,11 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None):
 
         logger.info(f"找到 {len(all_jars)} 个JAR文件")
 
-        # 使用PMD 6.55的命令格式
+        # 构建基础命令
         command = [
             "java",
             "-cp", classpath,
             "net.sourceforge.pmd.PMD",
-            "-d", project_path,
             "-R", "rulesets/java/ali-naming.xml",
             "rulesets/java/ali-comment.xml",
             "rulesets/java/ali-constant.xml",
@@ -199,6 +199,18 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None):
             "rulesets/java/ali-set.xml",
             "-f", "json"
         ]
+        
+        # 如果指定了要检查的文件列表，则使用多个 -d 参数指定文件
+        if files_to_check and len(files_to_check) > 0:
+            logger.info(f"将对 {len(files_to_check)} 个指定文件进行PMD检查")
+            # 直接使用绝对路径进行PMD检查
+            for file_path in files_to_check:
+                command.extend(["-d", file_path])
+                logger.info(f"添加PMD检查文件: {file_path}")
+        else:
+            logger.info("将对整个项目进行PMD检查")
+            command.extend(["-d", project_path])
+            
     else:  # Linux/Unix/macOS系统
         logger.info("检测到Linux/Unix/macOS系统，使用run.sh脚本")
 
@@ -211,11 +223,10 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None):
         # 确保脚本有执行权限
         os.chmod(run_sh_path, 0o755)
 
-        # 使用run.sh脚本
+        # 构建基础命令
         command = [
             run_sh_path,
             "pmd",
-            "-d", project_path,
             "-R", "rulesets/java/ali-naming.xml",
             "rulesets/java/ali-comment.xml",
             "rulesets/java/ali-constant.xml",
@@ -227,6 +238,17 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None):
             "rulesets/java/ali-set.xml",
             "-f", "json"
         ]
+        
+        # 如果指定了要检查的文件列表，则使用多个 -d 参数指定文件
+        if files_to_check and len(files_to_check) > 0:
+            logger.info(f"将对 {len(files_to_check)} 个指定文件进行PMD检查")
+            # 直接使用绝对路径进行PMD检查
+            for file_path in files_to_check:
+                command.extend(["-d", file_path])
+                logger.info(f"添加PMD检查文件: {file_path}")
+        else:
+            logger.info("将对整个项目进行PMD检查")
+            command.extend(["-d", project_path])
 
     try:
         logger.info("运行命令:\n" + " ".join(command))
@@ -287,7 +309,7 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None):
         return None
 
 
-def run_pmd_check_static(project_path: str, project_name: str, workspace_path: str, plugin_path: str = None) -> Optional[str]:
+def run_pmd_check_static(project_path: str, project_name: str, workspace_path: str, plugin_path: str = None, files_to_check: List[str] = None) -> Optional[str]:
     """
     运行PMD代码检查的静态方法，供调用链分析服务使用
     
@@ -296,6 +318,7 @@ def run_pmd_check_static(project_path: str, project_name: str, workspace_path: s
         project_name: 项目名称
         workspace_path: 工作空间路径
         plugin_path: 插件路径，如果为None则使用默认路径
+        files_to_check: 要检查的文件列表，如果为None则检查整个项目
         
     返回:
         成功时返回PMD报告文件路径，失败时返回None
@@ -305,7 +328,7 @@ def run_pmd_check_static(project_path: str, project_name: str, workspace_path: s
         output_file = FileUtil.get_project_file_path(workspace_path, project_name, "plugin_pmd_report_enhanced.json")
         
         # 运行PMD检查
-        report_data = run_pmd_check(project_path, output_file, plugin_path)
+        report_data = run_pmd_check(project_path, output_file, plugin_path, files_to_check)
         
         if report_data:
             logger.info(f"PMD检查成功完成，报告文件: {output_file}")

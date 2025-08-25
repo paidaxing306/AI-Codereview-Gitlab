@@ -6,11 +6,11 @@
 import os
 import re
 from typing import Dict, List, Tuple
-from biz.utils.log import logger
-from biz.service.call_chain_analysis.file_util import FileUtil
-from biz.utils.code_parser import GitDiffParser
-from biz.service.call_chain_analysis.java_project_analyzer import JavaProjectAnalyzer
 
+from biz.service.call_chain_analysis.file_util import FileUtil
+from biz.service.call_chain_analysis.java_project_analyzer import JavaProjectAnalyzer
+from biz.utils.code_parser import GitDiffParser
+from biz.utils.log import logger
 
 
 class ChangedSignatureExtractor:
@@ -28,13 +28,14 @@ class ChangedSignatureExtractor:
         """
         self.workspace_path = workspace_path or os.path.join(os.getcwd(), 'workspace')
 
-    def extract_changed_method_signatures(self, changes: list, project_name: str = None) -> str:
+    def extract_changed_method_signatures(self, changes: list, project_name: str = None, analysis_result_file: str = None) -> str:
         """
         提取变更的方法签名
         
         Args:
             changes: 代码变更列表
             project_name: 项目名称，用于生成临时文件路径
+            analysis_result_file: 项目分析结果文件路径
             
         Returns:
             临时文件路径，包含变更方法签名数据
@@ -65,7 +66,7 @@ class ChangedSignatureExtractor:
                     continue
 
                 # 解析当前变更的方法签名
-                method_signatures = self._extract_method_signatures_from_code(new_code, file_path)
+                method_signatures = self._extract_method_signatures_from_code(new_code, file_path, analysis_result_file)
                 
                 if method_signatures:
                     changed_method_signatures_map[i] = {
@@ -140,45 +141,360 @@ class ChangedSignatureExtractor:
         
         return '\n'.join(filtered_lines)
 
-    def _extract_method_signatures_from_code(self, code: str, file_path: str) -> List[str]:
-        """从代码中提取方法签名"""
+    def _extract_method_signatures_from_code(self, code: str, file_path: str, analysis_result_file: str = None) -> List[str]:
+        """从代码片段中提取方法签名，通过查找包含该代码片段的完整方法"""
         if not code or not file_path.endswith('.java'):
             return []
         
         try:
-            java_analyzer = JavaProjectAnalyzer()
-            formatted_code = java_analyzer.format_java_code(code)
+            # 1. 根据 file_path 找出对应的文件
+            actual_file_path = self._find_actual_file_path(file_path)
+            if not actual_file_path:
+                logger.warn(f"无法找到文件: {file_path}")
+                return []
             
-            # 提取包名
-            package_match = re.search(r'package\s+([\w.]+);', formatted_code)
-            package_name = package_match.group(1) if package_match else ""
+            # 2. 从分析结果文件中找出对应的类签名
+            analysis_data = FileUtil.load_analysis_result_from_file(analysis_result_file)
             
-            # 查找类定义
-            class_pattern = r'(?:public\s+)?(?:abstract\s+)?(?:final\s+)?class\s+(\w+)(?:\s+extends\s+[^{]+)?(?:\s+implements\s+[^{]+)?\s*\{'
-            class_matches = re.finditer(class_pattern, formatted_code)
+            if not analysis_data:
+                logger.warn(f"无法加载分析结果文件: {analysis_result_file}")
+                return []
             
-            method_signatures = []
-            for class_match in class_matches:
-                class_name = class_match.group(1)
-                class_signature_name = f"{package_name}.{class_name}" if package_name else class_name
+            # 3. 根据文件路径找到对应的类签名
+            class_signature_name = self._find_class_signature_by_file_path(actual_file_path, analysis_data)
+            if not class_signature_name:
+                logger.warn(f"无法找到文件 {file_path} 对应的类签名")
+                return []
+            
+            logger.info(f"找到类签名: {class_signature_name}")
+            
+            # 4. 根据类签名找出对应的方法签名
+            method_signatures = self._find_method_signatures_by_class(class_signature_name, analysis_data)
+            if not method_signatures:
+                logger.warn(f"类 {class_signature_name} 中没有找到方法签名")
+                return []
+            
+            # 5. 对每个方法签名，提取 method_source_code 并与传入的 code 进行匹配
+            matched_method_signatures = []
+            cleaned_code = self._clean_code_snippet(code)
+            
+            for method_signature in method_signatures:
+                method_data = analysis_data.get('method_signatures', {}).get(method_signature)
+                if not method_data:
+                    continue
                 
-                # 提取类内容和方法
-                class_start = class_match.start()
-                class_content = java_analyzer._extract_class_content(formatted_code, class_start)
-                extracted_methods = java_analyzer._extract_methods(class_content)
+                method_source_code = method_data.get('method_source_code', '')
+                if not method_source_code:
+                    continue
                 
-                # 提取方法签名
-                for method_content in extracted_methods:
-                    method_signature = java_analyzer._extract_method_signature(method_content)
-                    if method_signature:
-                        method_signature_name = f"{class_signature_name}.{method_signature}"
-                        method_signatures.append(method_signature_name)
+                # 检查方法源码是否包含代码片段
+                if self._contains_code_snippet(method_source_code, cleaned_code):
+                    matched_method_signatures.append(method_signature)
+                    logger.info(f"找到匹配的方法签名: {method_signature}")
             
-            return method_signatures
+            return matched_method_signatures
             
         except Exception as e:
             logger.error(f"提取方法签名时发生错误: {str(e)}")
             return []
+
+    def _find_class_signature_by_file_path(self, file_path: str, analysis_data: dict) -> str:
+        """
+        根据文件路径找到对应的类签名
+        
+        Args:
+            file_path: 文件路径
+            analysis_data: 分析结果数据
+            
+        Returns:
+            类签名，如果找不到则返回空字符串
+        """
+        try:
+            # 计算相对于工作空间的路径
+            if os.path.isabs(file_path):
+                try:
+                    relative_path = os.path.relpath(file_path, self.workspace_path)
+                except ValueError:
+                    # 如果文件不在工作空间内，使用文件名
+                    relative_path = os.path.basename(file_path)
+            else:
+                relative_path = file_path
+            
+            # 统一路径分隔符为反斜杠
+            relative_path = relative_path.replace('/', '\\').replace(os.sep, '\\')
+            
+            logger.info(f"查找类签名，相对路径: {relative_path}")
+            
+            # 在 class_signatures 中查找匹配的类
+            class_signatures = analysis_data.get('class_signatures', {})
+            
+            for class_signature_name, class_data in class_signatures.items():
+                class_path = class_data.get('class_path', '')
+                if class_path:
+                    normalized_class_path = class_path.replace('/', '\\').replace(os.sep, '\\')
+                    if normalized_class_path == relative_path:
+                        logger.info(f"找到匹配的类路径: {normalized_class_path}")
+                        return class_signature_name
+                    # 也尝试匹配文件名
+                    elif os.path.basename(normalized_class_path) == os.path.basename(relative_path):
+                        logger.info(f"通过文件名找到匹配的类: {class_signature_name}")
+                        return class_signature_name
+            
+            logger.warn(f"未找到匹配的类签名，相对路径: {relative_path}")
+            return ""
+            
+        except Exception as e:
+            logger.error(f"查找类签名时发生错误: {str(e)}")
+            return ""
+
+    def _find_method_signatures_by_class(self, class_signature_name: str, analysis_data: dict) -> List[str]:
+        """
+        根据类签名找出对应的方法签名列表
+        
+        Args:
+            class_signature_name: 类签名
+            analysis_data: 分析结果数据
+            
+        Returns:
+            方法签名列表
+        """
+        try:
+            method_signatures = []
+            all_method_signatures = analysis_data.get('method_signatures', {})
+            
+            for method_signature_name, method_data in all_method_signatures.items():
+                method_class_name = method_data.get('class_signature_name', '')
+                if method_class_name == class_signature_name:
+                    method_signatures.append(method_signature_name)
+            
+            return method_signatures
+            
+        except Exception as e:
+            logger.error(f"查找方法签名时发生错误: {str(e)}")
+            return []
+
+    def _clean_code_snippet(self, code: str) -> str:
+        """
+        清理代码片段，移除空白字符、注释等，便于比较
+        
+        Args:
+            code: 原始代码
+            
+        Returns:
+            清理后的代码
+        """
+        if not code:
+            return ""
+        
+        # 移除注释
+        # 移除单行注释 //
+        code = re.sub(r'//.*$', '', code, flags=re.MULTILINE)
+        
+        # 移除多行注释 /* */
+        code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
+        
+        # 移除注解
+        code = re.sub(r'@\w+(?:\s*\([^)]*\))?', '', code)
+        
+        # 移除字符串字面量中的内容（避免字符串中的代码影响匹配）
+        code = re.sub(r'"[^"]*"', '""', code)
+        code = re.sub(r"'[^']*'", "''", code)
+        
+        # 移除多余的空白字符（包括换行符、制表符等）
+        code = re.sub(r'\s+', ' ', code)
+        
+        # 移除首尾空白
+        code = code.strip()
+        
+        # 移除分号后的空白
+        code = re.sub(r';\s*', ';', code)
+        
+        # 移除括号前后的空白
+        code = re.sub(r'\s*\(\s*', '(', code)
+        code = re.sub(r'\s*\)\s*', ')', code)
+        
+        # 移除大括号前后的空白
+        code = re.sub(r'\s*\{\s*', '{', code)
+        code = re.sub(r'\s*\}\s*', '}', code)
+        
+        # 移除逗号后的空白
+        code = re.sub(r',\s*', ',', code)
+        
+        # 移除点号前后的空白
+        code = re.sub(r'\s*\.\s*', '.', code)
+        
+        return code
+
+    def _split_code_statements(self, code: str) -> List[str]:
+        """
+        将代码按语句分割
+        
+        Args:
+            code: 清理后的代码
+            
+        Returns:
+            语句列表
+        """
+        if not code:
+            return []
+        
+        # 按分号分割语句
+        statements = [stmt.strip() for stmt in code.split(';') if stmt.strip()]
+        
+        # 过滤掉太短的语句
+        statements = [stmt for stmt in statements if len(stmt) > 5]
+        
+        return statements
+
+    def _extract_identifiers(self, code: str) -> List[str]:
+        """
+        从代码中提取标识符（方法名、变量名等）
+        
+        Args:
+            code: 清理后的代码
+            
+        Returns:
+            标识符列表
+        """
+        if not code:
+            return []
+        
+        # 提取Java标识符（字母、数字、下划线组成，以字母或下划线开头）
+        identifiers = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', code)
+        
+        # 过滤掉Java关键字和常见系统方法
+        java_keywords = {
+            'if', 'for', 'while', 'switch', 'return', 'new', 'super', 'this', 'System', 'List', 'Optional', 'out', 'isPresent', 'get',
+            'set', 'add', 'remove', 'contains', 'size', 'isEmpty', 'clear', 'iterator', 'toString', 'equals', 'hashCode',
+            'clone', 'finalize', 'wait', 'notify', 'notifyAll', 'getClass', 'print', 'println', 'printf', 'format',
+            'parse', 'valueOf', 'substring', 'length', 'charAt', 'indexOf', 'lastIndexOf', 'replace', 'split',
+            'trim', 'toLowerCase', 'toUpperCase', 'startsWith', 'endsWith', 'contains', 'matches', 'replaceAll',
+            'append', 'insert', 'delete', 'reverse', 'capacity', 'ensureCapacity', 'setLength', 'charAt',
+            'put', 'get', 'remove', 'containsKey', 'containsValue', 'keySet', 'values', 'entrySet', 'clear',
+            'add', 'offer', 'poll', 'peek', 'element', 'remove', 'contains', 'size', 'isEmpty', 'clear',
+            'push', 'pop', 'peek', 'empty', 'search', 'capacity', 'trimToSize', 'ensureCapacity',
+            'public', 'private', 'protected', 'static', 'final', 'abstract', 'class', 'interface', 'extends', 'implements',
+            'void', 'int', 'long', 'double', 'float', 'boolean', 'char', 'byte', 'short', 'String', 'Object'
+        }
+        
+        # 过滤掉关键字和太短的标识符
+        filtered_identifiers = []
+        for ident in identifiers:
+            if (ident not in java_keywords and 
+                len(ident) > 2 and 
+                ident not in filtered_identifiers):
+                filtered_identifiers.append(ident)
+        
+        return filtered_identifiers
+
+    def _contains_code_snippet(self, method_content: str, code_snippet: str) -> bool:
+        """
+        检查方法内容是否包含代码片段
+        
+        Args:
+            method_content: 完整的方法内容
+            code_snippet: 要查找的代码片段
+            
+        Returns:
+            是否包含代码片段
+        """
+        if not method_content or not code_snippet:
+            return False
+        
+        # 如果代码片段太短，可能误匹配，设置最小长度
+        if len(code_snippet) < 10:
+            return False
+        
+        # 对方法内容和代码片段都进行相同的标准化处理
+        cleaned_method_content = self._clean_code_snippet(method_content)
+        cleaned_code_snippet = self._clean_code_snippet(code_snippet)
+        
+        # 如果清理后的方法内容太短，可能不是有效的方法
+        if len(cleaned_method_content) < 20:
+            return False
+        
+        # 如果清理后的代码片段太短，可能误匹配
+        if len(cleaned_code_snippet) < 10:
+            return False
+        
+        # 检查清理后的代码片段是否包含在清理后的方法内容中
+        is_contained = cleaned_code_snippet in cleaned_method_content
+        
+        # 如果精确匹配失败，尝试多种匹配策略
+        if not is_contained:
+            # 策略1：按语句分割，尝试匹配部分语句
+            if len(cleaned_code_snippet) > 20:
+                statements = self._split_code_statements(cleaned_code_snippet)
+                for statement in statements:
+                    if len(statement) > 10 and statement in cleaned_method_content:
+                        is_contained = True
+                        logger.debug(f"通过部分语句匹配成功: '{statement}'")
+                        break
+            
+            # 策略2：移除所有空白字符后比较
+            if not is_contained:
+                no_space_code = re.sub(r'\s+', '', cleaned_code_snippet)
+                no_space_method = re.sub(r'\s+', '', cleaned_method_content)
+                if len(no_space_code) > 10 and no_space_code in no_space_method:
+                    is_contained = True
+                    logger.debug(f"通过无空白字符匹配成功: '{no_space_code}'")
+            
+            # 策略3：提取关键标识符进行匹配
+            if not is_contained:
+                code_identifiers = self._extract_identifiers(cleaned_code_snippet)
+                method_identifiers = self._extract_identifiers(cleaned_method_content)
+                if code_identifiers and len(code_identifiers) >= 2:
+                    # 检查是否大部分标识符都匹配
+                    matched_count = sum(1 for ident in code_identifiers if ident in method_identifiers)
+                    if matched_count >= min(3, len(code_identifiers)):
+                        is_contained = True
+                        logger.debug(f"通过标识符匹配成功: {code_identifiers}")
+        
+        # 添加调试日志
+        if not is_contained:
+            logger.debug(f"代码片段匹配失败:")
+            logger.debug(f"清理后的代码片段: '{cleaned_code_snippet}'")
+            logger.debug(f"清理后的方法内容长度: {len(cleaned_method_content)}")
+            logger.debug(f"方法内容前100字符: '{cleaned_method_content[:100]}'")
+        else:
+            logger.debug(f"代码片段匹配成功: '{cleaned_code_snippet}'")
+        
+        return is_contained
+
+    def _find_actual_file_path(self, file_path: str) -> str:
+        """
+        查找实际的文件路径
+        
+        Args:
+            file_path: 相对路径或绝对路径
+            
+        Returns:
+            实际的文件路径，如果找不到则返回空字符串
+        """
+        # 如果已经是绝对路径且存在，直接返回
+        if os.path.isabs(file_path) and os.path.exists(file_path):
+            return file_path
+        
+        # 尝试相对于工作空间路径
+        workspace_file_path = os.path.join(self.workspace_path, file_path)
+        if os.path.exists(workspace_file_path):
+            return workspace_file_path
+        
+        # 尝试相对于当前工作目录
+        current_dir_file_path = os.path.join(os.getcwd(), file_path)
+        if os.path.exists(current_dir_file_path):
+            return current_dir_file_path
+        
+        # 尝试在workspace目录下递归查找
+        for root, dirs, files in os.walk(self.workspace_path):
+            for file in files:
+                if file == os.path.basename(file_path):
+                    full_path = os.path.join(root, file)
+                    # 检查路径是否匹配（忽略路径分隔符差异）
+                    if file_path.replace('/', os.sep).replace('\\', os.sep) in full_path.replace('/', os.sep).replace('\\', os.sep):
+                        return full_path
+        
+        return ""
 
     def _save_changed_methods_to_file(self, changed_methods: Dict[int, Dict], project_name: str = None) -> str:
         """
@@ -204,7 +520,7 @@ class ChangedSignatureExtractor:
             return ""
 
  
-def extract_changed_method_signatures_static(changes: list, project_name: str = None, workspace_path: str = None) -> str:
+def extract_changed_method_signatures_static(changes: list, project_name: str = None, workspace_path: str = None, analysis_result_file: str = None) -> str:
     """
     提取变更的方法签名（静态方法）
     
@@ -212,6 +528,7 @@ def extract_changed_method_signatures_static(changes: list, project_name: str = 
         changes: 代码变更列表
         project_name: 项目名称，用于生成临时文件路径
         workspace_path: 工作空间路径
+        analysis_result_file: 项目分析结果文件路径
         
     Returns:
         临时文件路径，包含变更方法签名数据
@@ -221,7 +538,7 @@ def extract_changed_method_signatures_static(changes: list, project_name: str = 
         extractor = ChangedSignatureExtractor(workspace_path)
         
         # 调用实例方法
-        return extractor.extract_changed_method_signatures(changes, project_name)
+        return extractor.extract_changed_method_signatures(changes, project_name, analysis_result_file)
         
     except Exception as e:
         logger.error(f"提取变更方法签名过程中发生错误: {str(e)}")
