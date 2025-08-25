@@ -93,7 +93,7 @@ class WeComNotifier:
             # 检查内容长度
             content_length = len(content.encode('utf-8'))
 
-            if content_length <= MAX_CONTENT_BYTES:
+            if content_length < MAX_CONTENT_BYTES:
                 # 内容长度在限制范围内，直接发送
                 data = self._build_message(content, title, msg_type, is_at_all)
                 self._send_message(post_url, data)

@@ -2,11 +2,12 @@ import os
 import traceback
 from datetime import datetime
 
-from biz.entity.review_entity import MergeRequestReviewEntity, PushReviewEntity
+from biz.entity.review_entity import MergeRequestReviewEntity, PushReviewEntity,MergeRequestReviewChainEntity
 from biz.event.event_manager import event_manager
 from biz.gitlab.webhook_handler import filter_changes, MergeRequestHandler, PushHandler
 from biz.github.webhook_handler import filter_changes as filter_github_changes, PullRequestHandler as GithubPullRequestHandler, PushHandler as GithubPushHandler
 from biz.service.review_service import ReviewService
+from biz.service.call_chain_analysis_service import CallChainAnalysisService
 from biz.utils.code_reviewer import CodeReviewer
 from biz.utils.im import notifier
 from biz.utils.log import logger
@@ -105,10 +106,10 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
             project_name = webhook_data['project']['name']
             source_branch = object_attributes.get('source_branch', '')
             target_branch = object_attributes.get('target_branch', '')
-            
-            if ReviewService.check_mr_last_commit_id_exists(project_name, source_branch, target_branch, last_commit_id):
-                logger.info(f"Merge Request with last_commit_id {last_commit_id} already exists, skipping review for {project_name}.")
-                return
+            #todo lcj  调试期间临时不开启
+            # if ReviewService.check_mr_last_commit_id_exists(project_name, source_branch, target_branch, last_commit_id):
+            #     logger.info(f"Merge Request with last_commit_id {last_commit_id} already exists, skipping review for {project_name}.")
+            #     return
 
         # 仅仅在MR创建或更新时进行Code Review
         # 获取Merge Request的changes
@@ -118,6 +119,13 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
         if not changes:
             logger.info('未检测到有关代码的修改,修改文件可能不满足SUPPORTED_EXTENSIONS。')
             return
+
+
+        # 启用调用链分析变更代码对其他方法的影响
+        code_call_chain_impact_analysis_enabled = os.environ.get('CODE_CALL_CHAIN_IMPACT_ANALYSIS_ENABLED', '0') == '1'
+        if code_call_chain_impact_analysis_enabled:
+            _process_call_chain_analysis(webhook_data, gitlab_token, changes, handler)
+
         # 统计本次新增、删除的代码总数
         additions = 0
         deletions = 0
@@ -136,9 +144,10 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
         review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
 
         # 将review结果提交到Gitlab的 notes
-        handler.add_merge_request_notes(f'Auto Review Result: \n{review_result}')
+        handler.add_merge_request_notes(f'Auto Review Result: \n{review_result})')
 
         # dispatch merge_request_reviewed event
+        mr_url = webhook_data['object_attributes']['url']
         event_manager['merge_request_reviewed'].send(
             MergeRequestReviewEntity(
                 project_name=webhook_data['project']['name'],
@@ -149,7 +158,7 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
                 commits=commits,
                 score=CodeReviewer.parse_review_score(review_text=review_result),
                 url=webhook_data['object_attributes']['url'],
-                review_result=review_result,
+                review_result=review_result+f"\n\nMR地址: {mr_url}",
                 url_slug=gitlab_url_slug,
                 webhook_data=webhook_data,
                 additions=additions,
@@ -276,7 +285,8 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
         review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
 
         # 将review结果提交到GitHub的 notes
-        handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
+        pr_url = webhook_data['pull_request']['html_url']
+        handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}\n\nPR地址: {pr_url}')
 
         # dispatch pull_request_reviewed event
         event_manager['merge_request_reviewed'].send(
@@ -301,3 +311,46 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
         error_message = f'服务出现未知错误: {str(e)}\n{traceback.format_exc()}'
         notifier.send_notification(content=error_message)
         logger.error('出现未知错误: %s', error_message)
+
+
+def _process_call_chain_analysis(webhook_data: dict, gitlab_token: str, changes: list, handler):
+    """
+    处理调用链分析
+    流程图：doc/调用链影响分析.md
+
+    调用链分析结果报告因为根据变更产生，此处只进行代码仓库的评论，外部群暂不进行推送
+
+    Args:
+        webhook_data: GitLab webhook数据
+        gitlab_token: GitLab访问令牌
+        changes: 代码变更列表
+        handler: MergeRequestHandler实例
+        gitlab_url_slug: GitLab URL标识
+        last_commit_id: 最后提交ID
+    """
+    # 获取调用链分析结果
+    changes_prompt_json = CallChainAnalysisService.process(webhook_data, gitlab_token, changes, handler)
+    
+    # 如果没有分析结果，直接返回
+    if changes_prompt_json is None:
+        logger.info("没有调用链分析数据，跳过调用链分析")
+        return
+    
+    # 遍历changes_prompt_json的value，循环执行代码审查
+    logger.info(f"开始处理调用链分析，包含 {len(changes_prompt_json)} 个变更的提示词")
+
+    for change_index, prompt in changes_prompt_json.items():
+        if not prompt or not prompt.strip():  # 确保提示词不为空
+            logger.info(f"Change {change_index} 的提示词为空，跳过处理")
+            continue
+            
+        logger.info(f"开始处理Change {change_index} 的调用链分析")
+
+        # 执行调用链代码审查
+        review_result = CodeReviewer().review_and_analyze_call_chain_code(prompt)
+
+        # 将review结果提交到Gitlab的 notes
+        handler.add_merge_request_notes(
+            f'Call Chain Analysis Result for Change {change_index}: \n{review_result}')
+
+        logger.info(f"Change {change_index} 的调用链分析完成")

@@ -98,6 +98,71 @@ class CodeReviewer(BaseReviewer):
         ]
         return self.call_llm(messages)
 
+    def review_and_analyze_call_chain_code(self, prompt_text: str) -> str:
+        """
+        调用链分析代码审查
+        Review判断prompt_text超出取前REVIEW_MAX_TOKENS个token，超出则截断prompt_text，
+        调用review_call_chain_code方法，返回review_result，如果review_result是markdown格式，则去掉头尾的```
+        :param prompt_text: 调用链分析的提示词文本
+        :return: 审查结果
+        """
+        # 如果超长，取前REVIEW_MAX_TOKENS个token
+        review_max_tokens = int(os.getenv("REVIEW_MAX_TOKENS", 10000))
+        # 如果prompt为空,打印日志
+        if not prompt_text:
+            logger.info("调用链分析提示词为空, prompt_text = %s", str(prompt_text))
+            return "调用链分析提示词为空"
+
+        # 计算tokens数量，如果超过REVIEW_MAX_TOKENS，截断prompt_text
+        tokens_count = count_tokens(prompt_text)
+        if tokens_count > review_max_tokens:
+            prompt_text = truncate_text_by_tokens(prompt_text, review_max_tokens)
+
+        review_result = self.review_call_chain_code(prompt_text).strip()
+        if review_result.startswith("```markdown") and review_result.endswith("```"):
+            return review_result[11:-3].strip()
+        return review_result
+
+    def review_call_chain_code(self, prompt_text: str) -> str:
+        """调用链分析代码审查并返回结果"""
+        # 加载调用链分析的提示词配置
+        call_chain_prompts = self._load_call_chain_prompts()
+        
+        messages = [
+            call_chain_prompts["system_message"],
+            {
+                "role": "user",
+                "content": call_chain_prompts["user_message"]["content"].format(
+                    diffs_text=prompt_text, commits_text=""
+                ),
+            },
+        ]
+        return self.call_llm(messages)
+
+    def _load_call_chain_prompts(self) -> Dict[str, Any]:
+        """加载调用链分析的提示词配置"""
+        prompt_templates_file = "conf/prompt_templates.yml"
+        try:
+            with open(prompt_templates_file, "r", encoding="utf-8") as file:
+                prompts = yaml.safe_load(file).get("call_chain_analysis", {})
+
+                # 使用Jinja2渲染模板
+                def render_template(template_str: str) -> str:
+                    return Template(template_str).render(style="professional")
+
+                system_prompt = render_template(prompts["system_prompt"])
+                user_prompt = render_template(prompts["user_prompt"])
+
+                return {
+                    "system_message": {"role": "system", "content": system_prompt},
+                    "user_message": {"role": "user", "content": user_prompt},
+                }
+        except (FileNotFoundError, KeyError, yaml.YAMLError) as e:
+            logger.error(f"加载调用链分析提示词配置失败: {e}")
+            # 如果加载失败，使用默认的代码审查提示词
+            return self.prompts
+
+
     @staticmethod
     def parse_review_score(review_text: str) -> int:
         """解析 AI 返回的 Review 结果，返回评分"""

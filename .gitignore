@@ -13,3 +13,6 @@ conf/.env
 __pycache__/
 .cursorignore
 .cursor
+plugin
+workspace
+log

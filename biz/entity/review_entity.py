@@ -43,3 +43,17 @@ class PushReviewEntity:
         # 合并所有 commit 的 message 属性，用分号分隔
         return "; ".join(commit["message"].strip() for commit in self.commits)
 
+class MergeRequestReviewChainEntity:
+    def __init__(self, project_name: str, author: str, source_branch: str, target_branch: str, updated_at: int,
+                score: float, url: str, review_result: str, url_slug: str, webhook_data: dict, last_commit_id: str):
+        self.project_name = project_name
+        self.author = author
+        self.source_branch = source_branch
+        self.target_branch = target_branch
+        self.updated_at = updated_at
+        self.score = score
+        self.url = url
+        self.review_result = review_result
+        self.url_slug = url_slug
+        self.webhook_data = webhook_data
+        self.last_commit_id = last_commit_id

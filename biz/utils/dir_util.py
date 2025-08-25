@@ -1,4 +1,77 @@
 import os
+import re
+import platform
+
+
+def sanitize_filename(filename: str) -> str:
+    """
+    清理文件名，使其在所有操作系统（Windows、Mac、Linux）上都是有效的
+    
+    Args:
+        filename: 原始文件名
+        
+    Returns:
+        清理后的有效文件名
+    """
+    if not filename:
+        return "unknown_file"
+    
+    # 获取当前操作系统
+    system = platform.system().lower()
+    
+    # 定义不同操作系统的非法字符
+    illegal_chars = {
+        'windows': r'[<>:"/\\|?*\x00-\x1f]',  # Windows非法字符
+        'darwin': r'[<>:"/\\|?*\x00-\x1f]',   # macOS非法字符（与Windows类似）
+        'linux': r'[<>:"/\\|?*\x00-\x1f]'     # Linux非法字符（与Windows类似）
+    }
+    
+    # 获取当前系统的非法字符模式
+    illegal_pattern = illegal_chars.get(system, illegal_chars['linux'])
+    
+    # 替换非法字符为下划线
+    sanitized = re.sub(illegal_pattern, '_', filename)
+    
+    # 移除或替换其他可能导致问题的字符（保留字母、数字、连字符、下划线、点）
+    sanitized = re.sub(r'[^\w\-_.]', '_', sanitized)
+    
+    # 确保文件名不以点或空格开头或结尾
+    sanitized = sanitized.strip('._ ')
+    
+    # 处理特殊情况
+    if not sanitized:
+        return "unknown_file"
+    
+    # Windows和macOS不允许某些保留名称
+    reserved_names = {
+        'windows': ['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 
+                   'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 
+                   'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'],
+        'darwin': ['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 
+                  'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 
+                  'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'],
+        'linux': []  # Linux没有保留名称限制
+    }
+    
+    reserved = reserved_names.get(system, [])
+    if sanitized.upper() in reserved:
+        sanitized = f"_{sanitized}_"
+    
+    # 限制文件名长度（考虑不同系统的限制）
+    max_length = {
+        'windows': 255,  # Windows NTFS
+        'darwin': 255,   # macOS HFS+/APFS
+        'linux': 255     # Linux ext4
+    }
+    
+    max_len = max_length.get(system, 255)
+    if len(sanitized) > max_len:
+        # 保留扩展名（如果有的话）
+        name, ext = os.path.splitext(sanitized)
+        max_name_len = max_len - len(ext)
+        sanitized = name[:max_name_len] + ext
+    
+    return sanitized
 
 
 def get_directory_tree(directory, ignore_spec=None, max_depth=2, depth=0, project_root=None, prefix="",
