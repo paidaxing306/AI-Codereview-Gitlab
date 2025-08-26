@@ -88,7 +88,7 @@ class WeComNotifier:
             # https://developer.work.weixin.qq.com/document/path/91770#%E6%96%87%E6%9C%AC%E7%B1%BB%E5%9E%8B
             # markdown类型最大4096字节
             # https://developer.work.weixin.qq.com/document/path/91770#markdown%E7%B1%BB%E5%9E%8B
-            MAX_CONTENT_BYTES = 4096 if msg_type == 'markdown' else 2048
+            MAX_CONTENT_BYTES = 4000 if msg_type == 'markdown' else 2000
 
             # 检查内容长度
             content_length = len(content.encode('utf-8'))

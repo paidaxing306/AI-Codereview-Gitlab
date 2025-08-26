@@ -18,3 +18,4 @@ streamlit-cookies-manager==0.2.0
 tiktoken==0.9.0
 zhipuai==2.1.5.20230904
 rq==2.1.0
+javalang==0.13.0

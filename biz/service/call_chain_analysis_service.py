@@ -352,9 +352,7 @@ class CallChainAnalysisService:
                 pmd_comment = f"""## 🔍 PMD代码规范检查报告
 
 {markdown_table}
-
----
-*此报告由P3c自动生成*"""
+"""
                 
                 # 提交到GitLab
                 handler.add_merge_request_notes(pmd_comment)

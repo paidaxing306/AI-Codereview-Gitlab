@@ -1,6 +1,7 @@
 import abc
 import os
 import re
+import time
 from typing import Dict, Any, List
 
 import yaml
@@ -44,7 +45,14 @@ class BaseReviewer(abc.ABC):
     def call_llm(self, messages: List[Dict[str, Any]]) -> str:
         """调用 LLM 进行代码审核"""
         logger.info(f"向 AI 发送代码 Review 请求, messages: {messages}")
+        
+        # 记录开始时间
+        start_time = time.time()
         review_result = self.client.completions(messages=messages)
+        # 计算耗时
+        elapsed_time = time.time() - start_time
+        
+        logger.info(f"LLM调用耗时: {elapsed_time:.3f}秒")
         logger.info(f"收到 AI 返回结果: {review_result}")
         return review_result
 
