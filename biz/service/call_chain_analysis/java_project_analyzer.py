@@ -250,8 +250,8 @@ class JavaProjectAnalyzer:
             # 解析文件基本信息
             # 计算相对于项目根目录的路径
             class_path = os.path.relpath(file_path, self.project_path)
-            # 将路径分隔符统一为反斜杠
-            class_path = class_path.replace(os.sep, '\\')
+            # 将路径分隔符统一为正斜杠，确保跨平台兼容
+            class_path = class_path.replace(os.sep, '/')
             
             # 解析包名
             package_match = self._package_pattern.search(content)

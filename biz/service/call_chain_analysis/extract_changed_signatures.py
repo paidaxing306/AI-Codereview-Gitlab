@@ -495,8 +495,10 @@ class ChangedSignatureExtractor:
             for file in files:
                 if file == os.path.basename(file_path):
                     full_path = os.path.join(root, file)
-                    # 检查路径是否匹配（忽略路径分隔符差异）
-                    if file_path.replace('/', os.sep).replace('\\', os.sep) in full_path.replace('/', os.sep).replace('\\', os.sep):
+                    # 检查路径是否匹配（统一使用正斜杠进行比较）
+                    normalized_file_path = file_path.replace('\\', '/').replace(os.sep, '/')
+                    normalized_full_path = full_path.replace('\\', '/').replace(os.sep, '/')
+                    if normalized_file_path in normalized_full_path:
                         return full_path
         
         return ""

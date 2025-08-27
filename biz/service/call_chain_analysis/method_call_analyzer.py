@@ -14,7 +14,7 @@ class MethodCallAnalyzer:
         
         Args:
             json_file_path: 分析结果JSON文件路径
-            skip_paths: 要跳过的路径，用逗号分隔，例如："xxx\\src\\main\\java\\com\\xxx\\xx\\dal\\dto"
+            skip_paths: 要跳过的路径，用逗号分隔，例如："xxx/src/main/java/com/xxx/xx/dal/dto"
                        如果为None，则从环境变量CODE_CALL_CHAIN_RELATED_METHOD_SKIP_PATH读取
         """
 
@@ -88,9 +88,14 @@ class MethodCallAnalyzer:
         if not class_path:
             return False
         
+        # 标准化类路径，统一使用正斜杠
+        normalized_class_path = class_path.replace('\\', '/').replace(os.sep, '/')
+        
         # 检查类路径是否在跳过的路径中
         for skip_path in self.skip_paths:
-            if class_path.startswith(skip_path):
+            # 标准化跳过路径，统一使用正斜杠
+            normalized_skip_path = skip_path.replace('\\', '/').replace(os.sep, '/')
+            if normalized_class_path.startswith(normalized_skip_path):
                 return True
         
         return False
