@@ -1,7 +1,7 @@
 import os
 import subprocess
 import shutil
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 from urllib.parse import urlparse
 from biz.utils.log import logger
 
@@ -61,8 +61,6 @@ class GitUtil:
             
         Returns:
             (是否成功, 错误信息)
-            
-        author  lichaojie
         """
         try:
             # 如果目标路径已存在，先删除
@@ -90,57 +88,55 @@ class GitUtil:
                         git_url_to_use = f"{parsed_url.scheme}://{token}@{netloc}{parsed_url.path}"
                 # 对于SSH URL，我们保持原样，因为token通常不适用于SSH
             
-            # 在Ubuntu/Linux环境下进行git配置优化
-            if os.name != 'nt':  # 非Windows系统
-                # 配置git以优化性能
-                GitUtil._execute_git_command(
-                    ['git', 'config', '--global', 'core.compression', '0'],
-                    timeout=30
-                )
-                GitUtil._execute_git_command(
-                    ['git', 'config', '--global', 'http.postBuffer', '524288000'],
-                    timeout=30
-                )
-                GitUtil._execute_git_command(
-                    ['git', 'config', '--global', 'http.lowSpeedLimit', '0'],
-                    timeout=30
-                )
-                GitUtil._execute_git_command(
-                    ['git', 'config', '--global', 'http.lowSpeedTime', '999999'],
-                    timeout=30
-                )
+            # 执行克隆命令
+            logger.info(f"正在克隆仓库: {git_url} 到 {target_path}")
+            
+            # 对于SSH URL，我们可能需要设置一些环境变量
+            env = os.environ.copy()
+            if git_url.startswith('ssh://'):
+                # 对于SSH URL，确保SSH配置正确
+                env['GIT_SSH_COMMAND'] = 'ssh -o StrictHostKeyChecking=no'
             
             # 在Windows上启用长路径支持
             if os.name == 'nt':  # Windows系统
                 # 配置Git支持长路径
-                GitUtil._execute_git_command(
+                subprocess.run(
                     ['git', 'config', '--global', 'core.longpaths', 'true'],
+                    capture_output=True,
+                    text=True,
                     timeout=30
                 )
                 # 配置Git使用Windows长路径API
-                GitUtil._execute_git_command(
+                subprocess.run(
                     ['git', 'config', '--global', 'core.protectNTFS', 'false'],
+                    capture_output=True,
+                    text=True,
                     timeout=30
                 )
             
             # 打印克隆命令
             clone_cmd = f"git clone {git_url_to_use} {target_path}"
-            logger.info(f"准备执行克隆命令: {clone_cmd}")
-            
-            # 执行克隆命令
-            success, stdout, stderr = GitUtil._execute_git_command(
+            logger.info(f"执行git命令: {clone_cmd}")
+            result = subprocess.run(
                 ['git', 'clone', git_url_to_use, target_path],
-                timeout=600  # 10分钟超时，适应大仓库
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5分钟超时
+                env=env
             )
             
-            if success:
+            if result.returncode == 0:
                 logger.info(f"仓库克隆成功: {target_path}")
                 return True, ""
             else:
-                error_msg = f"克隆失败: {stderr}"
+                error_msg = f"克隆失败: {result.stderr}"
                 logger.error(error_msg)
                 return False, error_msg
                 
+        except subprocess.TimeoutExpired:
+            error_msg = "克隆操作超时"
+            logger.error(error_msg)
+            return False, error_msg
         except Exception as e:
             error_msg = f"克隆过程中发生错误: {str(e)}"
             logger.error(error_msg)
@@ -157,28 +153,34 @@ class GitUtil:
             
         Returns:
             (是否成功, 错误信息)
-            
-        author  lichaojie
         """
         try:
             if not GitUtil.is_git_repository(repo_path):
                 return False, f"路径 {repo_path} 不是有效的git仓库"
             
             # 切换到指定分支
-            success, stdout, stderr = GitUtil._execute_git_command(
+            logger.info(f"正在切换到分支: {branch_name}")
+            logger.info(f"执行git命令: git checkout {branch_name}")
+            result = subprocess.run(
                 ['git', 'checkout', branch_name],
                 cwd=repo_path,
+                capture_output=True,
+                text=True,
                 timeout=30
             )
             
-            if success:
+            if result.returncode == 0:
                 logger.info(f"成功切换到分支: {branch_name}")
                 return True, ""
             else:
-                error_msg = f"切换分支失败: {stderr}"
+                error_msg = f"切换分支失败: {result.stderr}"
                 logger.error(error_msg)
                 return False, error_msg
                 
+        except subprocess.TimeoutExpired:
+            error_msg = "切换分支操作超时"
+            logger.error(error_msg)
+            return False, error_msg
         except Exception as e:
             error_msg = f"切换分支过程中发生错误: {str(e)}"
             logger.error(error_msg)
@@ -259,7 +261,7 @@ class GitUtil:
     
     @staticmethod
     def suggest_short_workspace_path(workspace_path: str) -> str:
-        """·
+        """
         建议一个更短的工作空间路径
         
         Args:
@@ -290,48 +292,61 @@ class GitUtil:
             
         Returns:
             (是否成功, 错误信息)
-            
-        author  lichaojie
         """
         try:
             logger.info(f"正在更新已存在的仓库: {repo_path}")
             
             # 1. 切换到指定分支
-            success, stdout, stderr = GitUtil._execute_git_command(
+            logger.info(f"切换到分支: {branch_name}")
+            logger.info(f"执行git命令: git checkout {branch_name}")
+            checkout_result = subprocess.run(
                 ['git', 'checkout', branch_name],
                 cwd=repo_path,
+                capture_output=True,
+                text=True,
                 timeout=30
             )
             
-            if not success:
+            if checkout_result.returncode != 0:
                 # 如果分支不存在，尝试创建并切换到该分支
                 logger.info(f"分支 {branch_name} 不存在，尝试创建并切换")
-                success, stdout, stderr = GitUtil._execute_git_command(
+                logger.info(f"执行git命令: git checkout -b {branch_name}")
+                checkout_result = subprocess.run(
                     ['git', 'checkout', '-b', branch_name],
                     cwd=repo_path,
+                    capture_output=True,
+                    text=True,
                     timeout=30
                 )
                 
-                if not success:
-                    error_msg = f"创建并切换到分支 {branch_name} 失败: {stderr}"
+                if checkout_result.returncode != 0:
+                    error_msg = f"创建并切换到分支 {branch_name} 失败: {checkout_result.stderr}"
                     logger.error(error_msg)
                     return False, error_msg
             
             # 2. 拉取最新代码
-            success, stdout, stderr = GitUtil._execute_git_command(
+            logger.info(f"拉取最新代码")
+            logger.info(f"执行git命令: git pull origin {branch_name}")
+            pull_result = subprocess.run(
                 ['git', 'pull', 'origin', branch_name],
                 cwd=repo_path,
-                timeout=120  # 增加超时时间到2分钟
+                capture_output=True,
+                text=True,
+                timeout=60
             )
             
-            if not success:
-                logger.warn(f"拉取代码失败: {stderr}")
+            if pull_result.returncode != 0:
+                logger.warn(f"拉取代码失败: {pull_result.stderr}")
                 # 拉取失败不影响整体流程，继续执行
             else:
                 logger.info("代码拉取成功")
             
             return True, ""
             
+        except subprocess.TimeoutExpired:
+            error_msg = "更新仓库操作超时"
+            logger.error(error_msg)
+            return False, error_msg
         except Exception as e:
             error_msg = f"更新仓库过程中发生错误: {str(e)}"
             logger.error(error_msg)
@@ -350,8 +365,6 @@ class GitUtil:
             
         Returns:
             (是否成功, 错误信息)
-            
-        author  lichaojie
         """
         try:
             logger.info(f"克隆新仓库: {git_url}")
@@ -362,90 +375,41 @@ class GitUtil:
                 return False, error
             
             # 2. 切换到指定分支
-            success, stdout, stderr = GitUtil._execute_git_command(
+            logger.info(f"切换到分支: {branch_name}")
+            logger.info(f"执行git命令: git checkout {branch_name}")
+            checkout_result = subprocess.run(
                 ['git', 'checkout', branch_name],
                 cwd=repo_path,
+                capture_output=True,
+                text=True,
                 timeout=30
             )
             
-            if not success:
+            if checkout_result.returncode != 0:
                 # 如果分支不存在，尝试创建并切换到该分支
                 logger.info(f"分支 {branch_name} 不存在，尝试创建并切换")
-                success, stdout, stderr = GitUtil._execute_git_command(
+                logger.info(f"执行git命令: git checkout -b {branch_name}")
+                checkout_result = subprocess.run(
                     ['git', 'checkout', '-b', branch_name],
                     cwd=repo_path,
+                    capture_output=True,
+                    text=True,
                     timeout=30
                 )
                 
-                if not success:
-                    error_msg = f"创建并切换到分支 {branch_name} 失败: {stderr}"
+                if checkout_result.returncode != 0:
+                    error_msg = f"创建并切换到分支 {branch_name} 失败: {checkout_result.stderr}"
                     logger.error(error_msg)
                     return False, error_msg
             
             logger.info(f"仓库克隆和分支设置完成: {repo_path}")
             return True, ""
             
+        except subprocess.TimeoutExpired:
+            error_msg = "克隆和设置仓库操作超时"
+            logger.error(error_msg)
+            return False, error_msg
         except Exception as e:
             error_msg = f"克隆和设置仓库过程中发生错误: {str(e)}"
             logger.error(error_msg)
             return False, error_msg
-
-    @staticmethod
-    def _execute_git_command(args: List[str], cwd: Optional[str] = None, env: Optional[dict] = None, timeout: int = 300) -> Tuple[bool, str, str]:
-        """
-        执行git命令并打印完整命令
-        
-        Args:
-            args: git命令参数列表
-            cwd: 工作目录
-            env: 环境变量
-            timeout: 超时时间（秒）
-            
-        Returns:
-            (是否成功, 标准输出, 错误输出)
-            
-        author  lichaojie
-        """
-        # 构建完整命令字符串用于打印
-        cmd_str = ' '.join(args)
-        logger.info(f"执行git命令: {cmd_str}")
-        if cwd:
-            logger.info(f"工作目录: {cwd}")
-        
-        try:
-            # 设置环境变量
-            process_env = os.environ.copy()
-            if env:
-                process_env.update(env)
-            
-            # 在Ubuntu/Linux环境下设置一些优化参数
-            if os.name != 'nt':  # 非Windows系统
-                # 设置git配置以优化性能
-                process_env['GIT_TERMINAL_PROGRESS'] = '1'
-                process_env['GIT_SSH_COMMAND'] = 'ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30'
-            
-            result = subprocess.run(
-                args,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=process_env
-            )
-            
-            if result.returncode == 0:
-                logger.info(f"git命令执行成功: {cmd_str}")
-                return True, result.stdout, result.stderr
-            else:
-                logger.error(f"git命令执行失败: {cmd_str}")
-                logger.error(f"错误输出: {result.stderr}")
-                return False, result.stdout, result.stderr
-                
-        except subprocess.TimeoutExpired:
-            error_msg = f"git命令执行超时: {cmd_str}"
-            logger.error(error_msg)
-            return False, "", error_msg
-        except Exception as e:
-            error_msg = f"git命令执行异常: {cmd_str}, 错误: {str(e)}"
-            logger.error(error_msg)
-            return False, "", error_msg
