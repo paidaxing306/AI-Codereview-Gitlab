@@ -123,6 +123,10 @@ class GitUtil:
                     timeout=30
                 )
             
+            # 打印克隆命令
+            clone_cmd = f"git clone {git_url_to_use} {target_path}"
+            logger.info(f"准备执行克隆命令: {clone_cmd}")
+            
             # 执行克隆命令
             success, stdout, stderr = GitUtil._execute_git_command(
                 ['git', 'clone', git_url_to_use, target_path],
