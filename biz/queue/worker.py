@@ -127,7 +127,7 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
             _process_call_chain_analysis(webhook_data, gitlab_token, changes, handler)
 
 
-        return
+
         # 统计本次新增、删除的代码总数
         additions = 0
         deletions = 0
