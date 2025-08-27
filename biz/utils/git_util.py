@@ -78,14 +78,14 @@ class GitUtil:
                 # 如果提供了token，将其添加到URL中
                 parsed_url = urlparse(git_url)
                 if parsed_url.scheme in ['http', 'https']:
-                    # HTTP/HTTPS URL，在用户名部分添加token
+                    # HTTP/HTTPS URL，使用 //{token}:{token}@ 格式
                     netloc = parsed_url.netloc
                     if '@' in netloc:
                         # 如果URL中已经有用户名，替换用户名部分
                         host_part = netloc.split('@')[-1]
-                        git_url_to_use = f"{parsed_url.scheme}://{token}@{host_part}{parsed_url.path}"
+                        git_url_to_use = f"{parsed_url.scheme}://{token}:{token}@{host_part}{parsed_url.path}"
                     else:
-                        git_url_to_use = f"{parsed_url.scheme}://{token}@{netloc}{parsed_url.path}"
+                        git_url_to_use = f"{parsed_url.scheme}://{token}:{token}@{netloc}{parsed_url.path}"
                 # 对于SSH URL，我们保持原样，因为token通常不适用于SSH
             
             # 执行克隆命令
