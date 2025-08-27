@@ -105,10 +105,7 @@ class PMDReportFormatter:
             
             # 组装完整的Markdown表格
             markdown_table = table_header + table_separator + '\n'.join(table_rows)
-            
-            # 添加统计信息
-            total_violations = len(violations_data)
-            markdown_table += f"\n\n**总计发现 {total_violations} 个代码规范问题**"
+
             
             return markdown_table
 

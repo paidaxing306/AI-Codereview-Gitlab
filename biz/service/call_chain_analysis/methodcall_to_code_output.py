@@ -256,28 +256,9 @@ class MethodCallToCodeOutput:
             print(f"\n转换完成，结果已保存到 {self.output_file}")
         
         print(f"总共处理了 {len(result)} 个方法调用关系")
-
-        # 输出统计信息
-        self._print_statistics(result)
-        
         return result
 
-    def _print_statistics(self, result: dict):
-        """打印统计信息"""
-        print("\n=== 统计信息 ===")
-        total_classes = 0
-        total_methods = 0
 
-        for method_signature, class_source_map in result.items():
-            total_classes += len(class_source_map)
-            for class_name, source_code in class_source_map.items():
-                # 简单统计方法数量（通过计算public/private/protected关键字）
-                method_count = len(re.findall(r'\b(public|private|protected)\s+\w+\s+\w+\s*\(', source_code))
-                total_methods += method_count
-
-        print(f"总方法签名数: {len(result)}")
-        print(f"总涉及类数: {total_classes}")
-        print(f"总涉及方法数: {total_methods}")
 
     def _save_result(self, result: dict):
         """保存结果到文件"""

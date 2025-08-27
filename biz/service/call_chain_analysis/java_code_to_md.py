@@ -18,13 +18,27 @@ class JavaCodePrinter:
 
     
     def _clean_java_code(self, java_code: str) -> str:
-        """清理Java代码，移除多余的空行和缩进"""
+        """
+        清理Java代码，减少过多空行，保持原有缩进
+        author  lichaojie
+        """
+        if not java_code or not java_code.strip():
+            return java_code
+            
         lines = java_code.split('\n')
         cleaned_lines = []
+        consecutive_empty_lines = 0
         
         for line in lines:
-            if line.strip():  # 如果这一行strip后非空则放入cleaned_lines
-                cleaned_lines.append(line.strip())
+            if line.strip():
+                # 非空行，重置连续空行计数
+                consecutive_empty_lines = 0
+                cleaned_lines.append(line)
+            else:
+                # 空行，最多保留一个连续空行
+                consecutive_empty_lines += 1
+                if consecutive_empty_lines <= 1:
+                    cleaned_lines.append(line)
         
         return '\n'.join(cleaned_lines)
     
@@ -154,7 +168,8 @@ def generate_assemble_prompt(changed_methods_file: str, code_context_file: str, 
         # 为每个变更单独生成format字段
         for change_index, change_data in changed_methods.items():
 
-            diffs_text = change_data.get('diffs_text', '')
+            old_code = change_data.get('old_code', '')
+            new_code = change_data.get('new_code', '')
             file_path = change_data.get('file_path', '')
             
             # 获取当前变更的Java代码内容
@@ -163,7 +178,8 @@ def generate_assemble_prompt(changed_methods_file: str, code_context_file: str, 
             # 使用Jinja2模板渲染format字段
             template = Template(item_prompt_template)
             format_field = template.render(
-                diffs_text=diffs_text,
+                old_code=old_code,
+                new_code=new_code,
                 context=context,
                 file_path=file_path
             )
