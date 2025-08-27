@@ -1,6 +1,6 @@
 version: '3.3'
 services:
-  python38:
+  ai-codereview:
     container_name: ai-codereview
     image: python:3.12
     restart: always
@@ -11,7 +11,9 @@ services:
     volumes:
       - ..:/app/
     working_dir: /app
-    # 
-    # command: sh -c "pip install -i https://mirrors.sustech.edu.cn/pypi/web/simple/ -r requirements.txt && streamlit run ui.py --server.port=5002 --server.address=0.0.0.0 & streamlit run ui.py --server.port=5003 --server.address=0.0.0.0 & python api.py"
     command: tail -f /dev/null
+    #command: >
+    #  sh -c "pip install -i https://mirrors.sustech.edu.cn/pypi/web/simple/ -r requirements.txt
+    #  && streamlit run ui.py --server.port=5002 --server.address=0.0.0.0
+    #  & python api.py"
 
