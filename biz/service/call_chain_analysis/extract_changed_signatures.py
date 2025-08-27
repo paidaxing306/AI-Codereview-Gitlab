@@ -208,6 +208,8 @@ class ChangedSignatureExtractor:
             
         Returns:
             类签名，如果找不到则返回空字符串
+            
+        author  lichaojie
         """
         try:
             # 计算相对于工作空间的路径
@@ -220,8 +222,8 @@ class ChangedSignatureExtractor:
             else:
                 relative_path = file_path
             
-            # 统一路径分隔符为反斜杠
-            relative_path = relative_path.replace('/', '\\').replace(os.sep, '\\')
+            # 标准化路径，统一使用正斜杠格式（Python支持跨平台）
+            relative_path = os.path.normpath(relative_path).replace(os.sep, '/')
             
             logger.info(f"查找类签名，相对路径: {relative_path}")
             
@@ -231,7 +233,10 @@ class ChangedSignatureExtractor:
             for class_signature_name, class_data in class_signatures.items():
                 class_path = class_data.get('class_path', '')
                 if class_path:
-                    normalized_class_path = class_path.replace('/', '\\').replace(os.sep, '\\')
+                    # 标准化类路径，统一使用正斜杠格式
+                    normalized_class_path = os.path.normpath(class_path).replace(os.sep, '/')
+                    
+                    # 直接比较标准化后的路径
                     if normalized_class_path == relative_path:
                         logger.info(f"找到匹配的类路径: {normalized_class_path}")
                         return class_signature_name
