@@ -2,7 +2,7 @@ version: '3.3'
 services:
   ai-codereview-api:
     container_name: ai-codereview-api
-    image: openjdk:8-jdk-slim
+    image: korekontrol/ubuntu-java-python3
     restart: always
     network_mode: "bridge"
     ports:
