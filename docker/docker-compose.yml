@@ -12,8 +12,5 @@ services:
       - ..:/app/
     working_dir: /app
     command: tail -f /dev/null
-    #command: >
-    #  sh -c "pip install -i https://mirrors.sustech.edu.cn/pypi/web/simple/ -r requirements.txt
-    #  && streamlit run ui.py --server.port=5002 --server.address=0.0.0.0
-    #  & python api.py"
+    
 
