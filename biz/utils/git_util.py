@@ -142,7 +142,7 @@ class GitUtil:
     @staticmethod
     def checkout_branch(repo_path: str, branch_name: str) -> Tuple[bool, str]:
         """
-        切换到指定分支
+        切换到指定分支（兼容性方法，建议使用 ensure_repository）
         
         Args:
             repo_path: 仓库路径
@@ -154,19 +154,6 @@ class GitUtil:
         try:
             if not GitUtil.is_git_repository(repo_path):
                 return False, f"路径 {repo_path} 不是有效的git仓库"
-            
-            # 先获取最新代码
-            logger.info(f"正在拉取最新代码: {repo_path}")
-            pull_result = subprocess.run(
-                ['git', 'pull'],
-                cwd=repo_path,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            
-            if pull_result.returncode != 0:
-                logger.warn(f"拉取代码失败: {pull_result.stderr}")
             
             # 切换到指定分支
             logger.info(f"正在切换到分支: {branch_name}")
@@ -198,16 +185,22 @@ class GitUtil:
     @staticmethod
     def ensure_repository(git_url: str, workspace_path: str, branch_name: str = "master", token: Optional[str] = None) -> Tuple[bool, str]:
         """
-        确保仓库存在，如果不存在则克隆，如果存在则更新并切换到指定分支
+        智能确保仓库存在并更新到最新代码
+        
+        逻辑：
+        1. 如果项目不存在 -> 克隆项目 -> 切换到指定分支
+        2. 如果项目已存在 -> 切换到指定分支 -> git pull 拉取最新代码
         
         Args:
             git_url: git仓库URL
             workspace_path: 工作空间路径
-            branch_name: 分支名称
+            branch_name: 分支名称，默认为master
             token: 访问令牌（可选）
             
         Returns:
             (是否成功, 错误信息)
+            
+        author  lichaojie
         """
         try:
             project_name = GitUtil.get_project_name_from_url(git_url)
@@ -226,23 +219,19 @@ class GitUtil:
                     os.makedirs(short_workspace, exist_ok=True)
             
             if GitUtil.is_git_repository(repo_path):
-                logger.info(f"仓库已存在: {repo_path}")
-                # 切换到指定分支
-                success, error = GitUtil.checkout_branch(repo_path, branch_name)
+                logger.info(f"项目已存在: {repo_path}")
+                # 项目存在：切换到指定分支并拉取最新代码
+                success, error = GitUtil._update_existing_repository(repo_path, branch_name)
                 if not success:
                     return False, error
             else:
-                logger.info(f"仓库不存在，开始克隆: {git_url}")
-                # 克隆仓库
-                success, error = GitUtil.clone_repository(git_url, repo_path, token)
-                if not success:
-                    return False, error
-                
-                # 切换到指定分支
-                success, error = GitUtil.checkout_branch(repo_path, branch_name)
+                logger.info(f"项目不存在，开始克隆: {git_url}")
+                # 项目不存在：克隆项目并切换到指定分支
+                success, error = GitUtil._clone_and_setup_repository(git_url, repo_path, branch_name, token)
                 if not success:
                     return False, error
             
+            logger.info(f"项目准备完成: {repo_path} (分支: {branch_name})")
             return True, ""
             
         except Exception as e:
@@ -287,3 +276,131 @@ class GitUtil:
                 # 如果路径太长，使用临时目录
                 return os.path.join(os.environ.get('TEMP', 'C:\\temp'), 'workspace')
         return workspace_path
+
+    @staticmethod
+    def _update_existing_repository(repo_path: str, branch_name: str) -> Tuple[bool, str]:
+        """
+        更新已存在的仓库：切换到指定分支并拉取最新代码
+        
+        Args:
+            repo_path: 仓库路径
+            branch_name: 分支名称
+            
+        Returns:
+            (是否成功, 错误信息)
+        """
+        try:
+            logger.info(f"正在更新已存在的仓库: {repo_path}")
+            
+            # 1. 切换到指定分支
+            logger.info(f"切换到分支: {branch_name}")
+            checkout_result = subprocess.run(
+                ['git', 'checkout', branch_name],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if checkout_result.returncode != 0:
+                # 如果分支不存在，尝试创建并切换到该分支
+                logger.info(f"分支 {branch_name} 不存在，尝试创建并切换")
+                checkout_result = subprocess.run(
+                    ['git', 'checkout', '-b', branch_name],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                
+                if checkout_result.returncode != 0:
+                    error_msg = f"创建并切换到分支 {branch_name} 失败: {checkout_result.stderr}"
+                    logger.error(error_msg)
+                    return False, error_msg
+            
+            # 2. 拉取最新代码
+            logger.info(f"拉取最新代码")
+            pull_result = subprocess.run(
+                ['git', 'pull', 'origin', branch_name],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            
+            if pull_result.returncode != 0:
+                logger.warn(f"拉取代码失败: {pull_result.stderr}")
+                # 拉取失败不影响整体流程，继续执行
+            else:
+                logger.info("代码拉取成功")
+            
+            return True, ""
+            
+        except subprocess.TimeoutExpired:
+            error_msg = "更新仓库操作超时"
+            logger.error(error_msg)
+            return False, error_msg
+        except Exception as e:
+            error_msg = f"更新仓库过程中发生错误: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
+
+    @staticmethod
+    def _clone_and_setup_repository(git_url: str, repo_path: str, branch_name: str, token: Optional[str] = None) -> Tuple[bool, str]:
+        """
+        克隆新仓库并设置到指定分支
+        
+        Args:
+            git_url: git仓库URL
+            repo_path: 目标路径
+            branch_name: 分支名称
+            token: 访问令牌（可选）
+            
+        Returns:
+            (是否成功, 错误信息)
+        """
+        try:
+            logger.info(f"克隆新仓库: {git_url}")
+            
+            # 1. 克隆仓库
+            success, error = GitUtil.clone_repository(git_url, repo_path, token)
+            if not success:
+                return False, error
+            
+            # 2. 切换到指定分支
+            logger.info(f"切换到分支: {branch_name}")
+            checkout_result = subprocess.run(
+                ['git', 'checkout', branch_name],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if checkout_result.returncode != 0:
+                # 如果分支不存在，尝试创建并切换到该分支
+                logger.info(f"分支 {branch_name} 不存在，尝试创建并切换")
+                checkout_result = subprocess.run(
+                    ['git', 'checkout', '-b', branch_name],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                
+                if checkout_result.returncode != 0:
+                    error_msg = f"创建并切换到分支 {branch_name} 失败: {checkout_result.stderr}"
+                    logger.error(error_msg)
+                    return False, error_msg
+            
+            logger.info(f"仓库克隆和分支设置完成: {repo_path}")
+            return True, ""
+            
+        except subprocess.TimeoutExpired:
+            error_msg = "克隆和设置仓库操作超时"
+            logger.error(error_msg)
+            return False, error_msg
+        except Exception as e:
+            error_msg = f"克隆和设置仓库过程中发生错误: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
