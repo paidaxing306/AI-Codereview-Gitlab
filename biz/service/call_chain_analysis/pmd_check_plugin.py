@@ -254,15 +254,16 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
             "java",
             "-cp", classpath,
             "net.sourceforge.pmd.PMD",
-            "-R", "rulesets/java/ali-naming.xml",
-            "rulesets/java/ali-comment.xml",
-            "rulesets/java/ali-constant.xml",
-            "rulesets/java/ali-exception.xml",
-            "rulesets/java/ali-flowcontrol.xml",
-            "rulesets/java/ali-oop.xml",
-            "rulesets/java/ali-orm.xml",
-            "rulesets/java/ali-other.xml",
-            "rulesets/java/ali-set.xml",
+            "-R","rulesets/java/ali-comment.xml",
+
+            "-R","rulesets/java/ali-constant.xml",
+            "-R","rulesets/java/ali-exception.xml",
+            "-R","rulesets/java/ali-flowcontrol.xml",
+            "-R","rulesets/java/ali-naming.xml",
+            "-R","rulesets/java/ali-oop.xml",
+            "-R","rulesets/java/ali-orm.xml",
+            "-R","rulesets/java/ali-other.xml",
+            "-R","rulesets/java/ali-set.xml",
             "-f", "json"
         ]
         
@@ -293,15 +294,17 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
         command = [
             run_sh_path,
             "pmd",
-            "-R", "rulesets/java/ali-naming.xml",
+            "-R",
             "rulesets/java/ali-comment.xml",
+
             "rulesets/java/ali-constant.xml",
-             "rulesets/java/ali-exception.xml",
-             "rulesets/java/ali-flowcontrol.xml",
-             "rulesets/java/ali-oop.xml",
-             "rulesets/java/ali-orm.xml",
-             "rulesets/java/ali-other.xml",
-             "rulesets/java/ali-set.xml",
+            "rulesets/java/ali-exception.xml",
+            "rulesets/java/ali-flowcontrol.xml",
+            "rulesets/java/ali-naming.xml",
+            "rulesets/java/ali-oop.xml",
+            "rulesets/java/ali-orm.xml",
+            "rulesets/java/ali-other.xml",
+            "rulesets/java/ali-set.xml",
             "-f", "json"
         ]
         
