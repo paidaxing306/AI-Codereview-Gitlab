@@ -1,14 +1,14 @@
 .DS_Store
 venv/
+.venv
+.github
+.starFactory
 test/
 .idea/
-
 log/*
 !log/.gitkeep
 data/*
 !data/.gitkeep
-
-conf/.env
 .pyc
 __pycache__/
 .cursorignore
