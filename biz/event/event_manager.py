@@ -15,23 +15,9 @@ event_manager = {
 def on_merge_request_reviewed(mr_review_entity: MergeRequestReviewEntity):
     # 发送IM消息通知
     im_msg = f"""
-### 🔀 {mr_review_entity.project_name}: Merge Request
-
-#### 合并请求信息:
-- **提交者:** {mr_review_entity.author}
-
-- **源分支**: {mr_review_entity.source_branch}
-- **目标分支**: {mr_review_entity.target_branch}
-- **更新时间**: {mr_review_entity.updated_at}
-- **提交信息:** {mr_review_entity.commit_messages}
-
-- [查看合并详情]({mr_review_entity.url})
-
-- **AI Review 结果:** 
-
 {mr_review_entity.review_result}
     """
-    notifier.send_notification(content=im_msg, msg_type='markdown', title='Merge Request Review',
+    notifier.send_notification(content=im_msg, msg_type='markdown', title='MR AI Review完成',
                                project_name=mr_review_entity.project_name, url_slug=mr_review_entity.url_slug,
                                webhook_data=mr_review_entity.webhook_data)
 

@@ -314,27 +314,26 @@ class PMDReportFormatter:
             logger.warn(f"处理文件名时发生错误: {str(e)}")
             return absolute_filename
 
+
+    _PRIORITY_MAPPING = {
+        1: "🔴 高优先级",
+        2: "🟡 中优先级", 
+        3: "🟢 低优先级",
+        4: "⚪ 信息级别",
+        5: "⚪ 信息级别"
+    }
+
+ 
     @staticmethod
     def _format_priority(priority: int) -> str:
         """
-        格式化优先级
-
-        Args:
-            priority: 优先级数字
-
-        Returns:
-            格式化的优先级文本
+        格式化PMD报告的优先级为可读的文本格式
+        author  lichaojie
         """
-        priority_map = {
-            1: "🔴 高",
-            2: "🟡 中",
-            3: "🟢 低",
-            4: "⚪ 信息",
-            5: "⚪ 信息"
-        }
-        
-        return priority_map.get(priority, f"未知({priority})")
-
+        if not isinstance(priority, int):
+            return f"❓ 无效优先级({priority})"
+        priority = min(max(priority, 1), 5)
+        return PMDReportFormatter._PRIORITY_MAPPING.get(priority, f"❓ 未知优先级({priority})")
     @staticmethod
     def format_pmd_report_static(pmd_report_file: str, branch_name: str = 'master', webhook_data: dict = None) -> Optional[str]:
         """

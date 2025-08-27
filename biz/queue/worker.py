@@ -146,11 +146,11 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
         # 将review结果提交到Gitlab的 notes
         handler.add_merge_request_notes(f'Auto Review Result: \n{review_result})')
 
-        # dispatch merge_request_reviewed event
-        mr_url = webhook_data['object_attributes']['url']
+        review_finish_notice = mr_finish_notice_content(webhook_data)
+
         event_manager['merge_request_reviewed'].send(
             MergeRequestReviewEntity(
-                project_name=webhook_data['project']['name'],
+                project_name= webhook_data['project']['name'],
                 author=webhook_data['user']['username'],
                 source_branch=webhook_data['object_attributes']['source_branch'],
                 target_branch=webhook_data['object_attributes']['target_branch'],
@@ -158,7 +158,7 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
                 commits=commits,
                 score=CodeReviewer.parse_review_score(review_text=review_result),
                 url=webhook_data['object_attributes']['url'],
-                review_result=review_result+f"\n\nMR地址: {mr_url}",
+                review_result=review_finish_notice,
                 url_slug=gitlab_url_slug,
                 webhook_data=webhook_data,
                 additions=additions,
@@ -171,6 +171,19 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
         error_message = f'AI Code Review 服务出现未知错误: {str(e)}\n{traceback.format_exc()}'
         notifier.send_notification(content=error_message)
         logger.error('出现未知错误: %s', error_message)
+
+
+def mr_finish_notice_content(webhook_data):
+    project_name = webhook_data['project']['name']
+    title = webhook_data['object_attributes']['title']
+    mr_url = webhook_data['object_attributes']['url']
+    mr_direction = webhook_data['object_attributes']['source_branch'] + ' -> ' + webhook_data['object_attributes'][
+        'target_branch']
+    created_at = webhook_data['object_attributes']['created_at']
+    author = webhook_data['user']['username']
+    review_finish_notice = f"项目: {project_name} \n合并: {mr_direction} \n标题: {title} \n作者: {author}  {created_at} \n\nMR地址: \n{mr_url}"
+    return review_finish_notice
+
 
 def handle_github_push_event(webhook_data: dict, github_token: str, github_url: str, github_url_slug: str):
     push_review_enabled = os.environ.get('PUSH_REVIEW_ENABLED', '0') == '1'

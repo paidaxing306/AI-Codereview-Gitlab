@@ -4,10 +4,76 @@ import os
 import json
 import glob
 import re
+import time
 from typing import Dict, List, Optional, Tuple
 
 from biz.utils.log import logger
 from biz.service.call_chain_analysis.file_util import FileUtil
+
+
+class PMDCheckPlugin:
+    """
+    PMD代码检查插件类
+    """
+    
+    def __init__(self):
+        """
+        初始化PMD检查插件，从环境变量读取跳过规则列表
+        """
+        skip_rule_list_str = os.environ.get('CODE_CALL_CHAIN_P3C_SKIP_ROLE', '')
+        if skip_rule_list_str:
+            self.skip_rule_list = [rule.strip() for rule in skip_rule_list_str.split(',') if rule.strip()]
+            logger.info(f"从环境变量读取到跳过规则列表: {self.skip_rule_list}")
+        else:
+            self.skip_rule_list = []
+            logger.info("环境变量CODE_CALL_CHAIN_P3C_SKIP_ROLE未设置，使用空列表")
+    
+    def filter_violations(self, report_data: Dict) -> Dict:
+        """
+        根据skip_rule_list过滤violations
+        
+        参数:
+            report_data: PMD报告数据
+            
+        返回:
+            过滤后的报告数据
+        """
+        if not self.skip_rule_list or 'files' not in report_data:
+            return report_data
+        
+        start_time = time.time()
+        filtered_files = []
+        total_violations_before = 0
+        total_violations_after = 0
+        
+        for file_info in report_data['files']:
+            violations = file_info.get('violations', [])
+            total_violations_before += len(violations)
+            
+            # 过滤violations
+            filtered_violations = []
+            for violation in violations:
+                rule = violation.get('rule', '')
+                if rule not in self.skip_rule_list:
+                    filtered_violations.append(violation)
+                else:
+                    logger.debug(f"跳过规则: {rule}")
+            
+            # 创建新的文件信息
+            filtered_file_info = file_info.copy()
+            filtered_file_info['violations'] = filtered_violations
+            filtered_files.append(filtered_file_info)
+            
+            total_violations_after += len(filtered_violations)
+        
+        # 创建过滤后的报告数据
+        filtered_report_data = report_data.copy()
+        filtered_report_data['files'] = filtered_files
+        
+        elapsed_time = time.time() - start_time
+        logger.info(f"过滤完成: 原始violations数量 {total_violations_before}, 过滤后 {total_violations_after}, 耗时: {elapsed_time:.3f}秒")
+        
+        return filtered_report_data
 
 
 def extract_method_signatures_from_java_file(file_path: str, begin_line: int, end_line: int) -> List[str]:
@@ -230,12 +296,12 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
             "-R", "rulesets/java/ali-naming.xml",
             "rulesets/java/ali-comment.xml",
             "rulesets/java/ali-constant.xml",
-            "rulesets/java/ali-exception.xml",
-            "rulesets/java/ali-flowcontrol.xml",
-            "rulesets/java/ali-oop.xml",
-            "rulesets/java/ali-orm.xml",
-            "rulesets/java/ali-other.xml",
-            "rulesets/java/ali-set.xml",
+             "rulesets/java/ali-exception.xml",
+             "rulesets/java/ali-flowcontrol.xml",
+             "rulesets/java/ali-oop.xml",
+             "rulesets/java/ali-orm.xml",
+             "rulesets/java/ali-other.xml",
+             "rulesets/java/ali-set.xml",
             "-f", "json"
         ]
         
@@ -271,6 +337,10 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
             if result.stdout:
                 try:
                     report_data = json.loads(result.stdout)
+
+                    # 创建PMD检查插件实例并过滤violations
+                    pmd_plugin = PMDCheckPlugin()
+                    report_data = pmd_plugin.filter_violations(report_data)
 
                     # 添加方法签名到报告
                     report_data = add_method_signatures_to_report(report_data)
