@@ -137,14 +137,14 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
             deletions += item.get('deletions', 0)
 
         # 获取Merge Request的commits
-        commits = handler.get_merge_request_commits()
-        if not commits:
-            logger.error('Failed to get commits')
-            return
+        # commits = handler.get_merge_request_commits()
+        # if not commits:
+        #     logger.error('Failed to get commits')
+        #     return
 
         # review 代码
-        commits_text = ';'.join(commit['title'] for commit in commits)
-        review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
+        # commits_text = ';'.join(commit['title'] for commit in commits)
+        review_result = CodeReviewer().review_and_strip_code(str(changes), "")
 
         # 将review结果提交到Gitlab的 notes
         handler.add_merge_request_notes(f'Auto Review Result: \n{review_result})')
@@ -158,7 +158,7 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
                 source_branch=webhook_data['object_attributes']['source_branch'],
                 target_branch=webhook_data['object_attributes']['target_branch'],
                 updated_at=int(datetime.now().timestamp()),
-                commits=commits,
+                commits="",
                 score=CodeReviewer.parse_review_score(review_text=review_result),
                 url=webhook_data['object_attributes']['url'],
                 review_result=review_finish_notice,

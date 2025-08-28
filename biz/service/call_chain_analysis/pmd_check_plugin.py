@@ -254,7 +254,7 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
             "java",
             "-cp", classpath,
             "net.sourceforge.pmd.PMD",
-            "-min","2",
+            "-min","1",
             "-R","rulesets/java/ali-comment.xml",
             "-R","rulesets/java/ali-constant.xml",
             "-R","rulesets/java/ali-exception.xml",
@@ -295,7 +295,7 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
         command = [
             run_sh_path,
             "pmd",
-            "-min","2",
+            "-min","1",
             "-R",
             "rulesets/java/ali-comment.xml",
             "rulesets/java/ali-constant.xml",
