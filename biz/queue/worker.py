@@ -126,7 +126,7 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
         if code_call_chain_impact_analysis_enabled:
             _process_call_chain_analysis(webhook_data, gitlab_token, changes, handler)
 
-        return
+
 
 
         # 统计本次新增、删除的代码总数
@@ -351,7 +351,7 @@ def _process_call_chain_analysis(webhook_data: dict, gitlab_token: str, changes:
     if changes_prompt_json is None:
         logger.info("没有调用链分析数据，跳过调用链分析")
         return
-    return # todo lcj 调试临时增加阻断
+
     # 遍历changes_prompt_json的value，循环执行代码审查
     logger.info(f"开始处理调用链分析，包含 {len(changes_prompt_json)} 个变更的提示词")
 
