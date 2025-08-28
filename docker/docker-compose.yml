@@ -11,7 +11,7 @@ services:
       - ..:/app/
     working_dir: /app
     user: "0:0"
-    command: sh -c "chmod -R 755 /app/plugin && pip3 install -i https://mirrors.sustech.edu.cn/pypi/web/simple/ -r requirements.txt && python3 api.py"
+    command: sh -c "chmod -R 755 /app/plugin && git config --global --add safe.directory /app/workspace && git config --global --add safe.directory /app/workspace/* && pip3 install -i https://mirrors.sustech.edu.cn/pypi/web/simple/ -r requirements.txt && python3 api.py"
  
 
   ai-codereview-ui:
