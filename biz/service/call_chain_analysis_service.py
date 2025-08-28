@@ -129,6 +129,7 @@ class CallChainAnalysisService:
                 logger.warn("格式化字段生成失败，跳过调用链分析")
                 return None
 
+            return None
             # 7. 将提示词添加到changes中
             return FileUtil.load_prompts_from_file(changed_prompt_file)
 
