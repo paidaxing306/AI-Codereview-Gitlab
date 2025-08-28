@@ -96,7 +96,7 @@ class CallChainAnalysisService:
             else:
                 logger.warn("PMD代码检查失败，但不会影响后续调用链分析步骤，继续执行")
 
-            
+            return None # todo lcj 阻断临时调试
             # 实现3.2步骤：过滤PMD已检查的方法签名
             filtered_changed_methods_file = self._filter_pmd_checked_methods(
                 pmd_report_file, changed_methods_file, project_info['name']
