@@ -254,8 +254,8 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
             "java",
             "-cp", classpath,
             "net.sourceforge.pmd.PMD",
+            "-min","2",
             "-R","rulesets/java/ali-comment.xml",
-
             "-R","rulesets/java/ali-constant.xml",
             "-R","rulesets/java/ali-exception.xml",
             "-R","rulesets/java/ali-flowcontrol.xml",
@@ -265,6 +265,7 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
             "-R","rulesets/java/ali-other.xml",
             "-R","rulesets/java/ali-set.xml",
             "-f", "json"
+
         ]
         
         # 如果指定了要检查的文件列表，则使用多个 -d 参数指定文件
@@ -294,9 +295,9 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
         command = [
             run_sh_path,
             "pmd",
+            "-min","2",
             "-R",
             "rulesets/java/ali-comment.xml",
-
             "rulesets/java/ali-constant.xml",
             "rulesets/java/ali-exception.xml",
             "rulesets/java/ali-flowcontrol.xml",
@@ -306,6 +307,7 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
             "rulesets/java/ali-other.xml",
             "rulesets/java/ali-set.xml",
             "-f", "json"
+
         ]
         
         # 如果指定了要检查的文件列表，则使用多个 -d 参数指定文件
