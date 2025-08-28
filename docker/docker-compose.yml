@@ -10,7 +10,8 @@ services:
     volumes:
       - ..:/app/
     working_dir: /app
-    command: sh -c "chmod +x /app/plugin/pmd-bin-6.55.0/bin/*.sh && pip3 install -i https://mirrors.sustech.edu.cn/pypi/web/simple/ -r requirements.txt && python3 api.py"
+    user: "0:0"
+    command: sh -c "chmod -R 755 /app/plugin && pip3 install -i https://mirrors.sustech.edu.cn/pypi/web/simple/ -r requirements.txt && python3 api.py"
  
 
   ai-codereview-ui:
