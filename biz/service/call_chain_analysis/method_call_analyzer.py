@@ -15,16 +15,11 @@ class MethodCallAnalyzer:
         Args:
             json_file_path: 分析结果JSON文件路径
             skip_paths: 要跳过的路径，用逗号分隔，例如："xxx/src/main/java/com/xxx/xx/dal/dto"
-                       如果为None，则从环境变量CODE_CALL_CHAIN_RELATED_METHOD_SKIP_PATH读取
+
         """
 
         self.json_file_path = json_file_path
 
-        skip_paths = os.getenv("CODE_CALL_CHAIN_RELATED_METHOD_SKIP_PATH", "")
-        
-        self.skip_paths = []
-        if skip_paths:
-            self.skip_paths = [path.strip() for path in skip_paths.split(',')]
         
         self.analysis_data = self._load_analysis_data()
         self._build_caller_mapping()

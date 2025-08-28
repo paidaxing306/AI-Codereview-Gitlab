@@ -114,37 +114,18 @@ class JavaProjectAnalyzer:
         # 空行清理
         self._empty_lines_pattern = re.compile(r'\n\s*\n\s*\n+')
         
-        # 定义需要过滤的方法关键词
-        self.METHOD_FILTER_KEYWORDS = [
-            ".getcode()",
-            "getbyid",
-        ]
-        
-        # 定义需要过滤的类关键词
-        self.CLASS_FILTER_KEYWORDS = [
-            ".util.",
-            ".test.",
-            ".dto.",
-            ".model.",
-            ".vo.",
-            ".test",
-            ".domain.",
-            ".entity.",
-            ".enums."
-        ]
-        
-        # 定义需要过滤的包路径关键词
-        self.PACKAGE_FILTER_KEYWORDS = [
-            ".util.",
-            ".test.",
-            ".dto.",
-            ".model.",
-            ".vo.",
-            ".test",
-            ".domain.",
-            ".entity.",
-            ".enums."
-        ]
+        # 从环境变量读取包路径过滤关键词配置
+        package_filter_keywords_str = os.environ.get('CODE_CALL_PACKAGE_FILE_FILTER_KEYWORDS', '.util.,.test.,.dto.,.model.,.vo.,.test,.domain.,.entity.,.enums.')
+        self.PACKAGE_FILTER_KEYWORDS = [kw.strip() for kw in package_filter_keywords_str.split(',') if kw.strip()]
+
+        # 从环境变量读取类过滤关键词配置
+        class_filter_keywords_str = os.environ.get('CODE_CALL_CHAIN_JAVA_CLASS_FILTER_KEYWORDS', '.util.,.test.,.dto.,.model.,.vo.,.test,.domain.,.entity.,.enums.')
+        self.CLASS_FILTER_KEYWORDS = [kw.strip() for kw in class_filter_keywords_str.split(',') if kw.strip()]
+
+        # 从环境变量读取过滤关键词配置
+        method_filter_keywords_str = os.environ.get('CODE_CALL_CHAIN_JAVA_METHOD_FILTER_KEYWORDS', '.getcode(),getbyid')
+        self.METHOD_FILTER_KEYWORDS = [kw.strip() for kw in method_filter_keywords_str.split(',') if kw.strip()]
+
     
     def analyze_project(self, project_path: str) -> Tuple[Dict[str, ClassSignature], 
                                                          Dict[str, MethodSignature], 
