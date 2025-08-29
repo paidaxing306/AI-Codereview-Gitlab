@@ -122,12 +122,10 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
 
 
         # 启用调用链分析变更代码对其他方法的影响
-        code_call_chain_impact_analysis_enabled = os.environ.get('CODE_CALL_CHAIN_IMPACT_ANALYSIS_ENABLED', '0') == '1'
-        if code_call_chain_impact_analysis_enabled:
-            _process_call_chain_analysis(webhook_data, gitlab_token, changes, handler)
+        if os.environ.get('CODE_CHANGE_ANALYSIS_ENABLED', '0') == '1':
+            _process_change_analysis(webhook_data, gitlab_token, changes, handler)
 
-
-
+        
 
         # 统计本次新增、删除的代码总数
         additions = 0
@@ -329,7 +327,7 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
         logger.error('出现未知错误: %s', error_message)
 
 
-def _process_call_chain_analysis(webhook_data: dict, gitlab_token: str, changes: list, handler):
+def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: list, handler):
     """
     处理调用链分析
     流程图：doc/调用链影响分析.md
@@ -363,7 +361,7 @@ def _process_call_chain_analysis(webhook_data: dict, gitlab_token: str, changes:
         logger.info(f"开始处理Change {change_index} 的调用链分析")
 
         # 执行调用链代码审查
-        review_result = CodeReviewer().review_and_analyze_call_chain_code(prompt)
+        review_result = CodeReviewer().review_and_analyze_call_chain_code(prompt, "java")
 
         # 将review结果提交到Gitlab的 notes
         handler.add_merge_request_notes(

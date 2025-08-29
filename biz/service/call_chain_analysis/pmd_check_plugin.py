@@ -18,7 +18,7 @@ class PMDCheckPlugin:
     
     def __init__(self):
         """
-        初始化PMD检查插件，从环境变量读取跳过规则列表
+        初始化PMD检查插件，从环境变量读取跳过规则列表和文件名关键词
         """
         skip_rule_list_str = os.environ.get('CODE_CALL_CHAIN_P3C_SKIP_ROLE', '')
         if skip_rule_list_str:
@@ -27,10 +27,14 @@ class PMDCheckPlugin:
         else:
             self.skip_rule_list = []
             logger.info("环境变量CODE_CALL_CHAIN_P3C_SKIP_ROLE未设置，使用空列表")
+        
+        # 初始化文件名关键词过滤列表
+        self.skip_filename_keywords = ['test']
+        logger.info(f"文件名关键词过滤列表: {self.skip_filename_keywords}")
     
     def filter_violations(self, report_data: Dict) -> Dict:
         """
-        根据skip_rule_list过滤violations
+        根据skip_rule_list过滤violations，并根据文件名关键词过滤文件
         
         参数:
             report_data: PMD报告数据
@@ -38,40 +42,56 @@ class PMDCheckPlugin:
         返回:
             过滤后的报告数据
         """
-        if not self.skip_rule_list or 'files' not in report_data:
+        if 'files' not in report_data:
             return report_data
         
         start_time = time.time()
         filtered_files = []
         total_violations_before = 0
         total_violations_after = 0
+        skipped_files_count = 0
         
         for file_info in report_data['files']:
+            filename = file_info.get('filename', '')
             violations = file_info.get('violations', [])
             total_violations_before += len(violations)
             
-            # 过滤violations
-            filtered_violations = []
-            for violation in violations:
-                rule = violation.get('rule', '')
-                if rule not in self.skip_rule_list:
-                    filtered_violations.append(violation)
-                else:
-                    logger.debug(f"跳过规则: {rule}")
+            # 检查文件名是否包含需要跳过的关键词
+            should_skip_file = False
+            for keyword in self.skip_filename_keywords:
+                if keyword.lower() in filename.lower():
+                    should_skip_file = True
+                    logger.debug(f"跳过包含关键词 '{keyword}' 的文件: {filename}")
+                    break
+            
+            if should_skip_file:
+                skipped_files_count += 1
+                continue
+            
+            # 过滤violations（如果skip_rule_list不为空）
+            if self.skip_rule_list:
+                filtered_violations = []
+                for violation in violations:
+                    rule = violation.get('rule', '')
+                    if rule not in self.skip_rule_list:
+                        filtered_violations.append(violation)
+                    else:
+                        logger.debug(f"跳过规则: {rule}")
+                violations = filtered_violations
             
             # 创建新的文件信息
             filtered_file_info = file_info.copy()
-            filtered_file_info['violations'] = filtered_violations
+            filtered_file_info['violations'] = violations
             filtered_files.append(filtered_file_info)
             
-            total_violations_after += len(filtered_violations)
+            total_violations_after += len(violations)
         
         # 创建过滤后的报告数据
         filtered_report_data = report_data.copy()
         filtered_report_data['files'] = filtered_files
         
         elapsed_time = time.time() - start_time
-        logger.info(f"过滤完成: 原始violations数量 {total_violations_before}, 过滤后 {total_violations_after}, 耗时: {elapsed_time:.3f}秒")
+        logger.info(f"过滤完成: 原始violations数量 {total_violations_before}, 过滤后 {total_violations_after}, 跳过文件数 {skipped_files_count}, 耗时: {elapsed_time:.3f}秒")
         
         return filtered_report_data
 
