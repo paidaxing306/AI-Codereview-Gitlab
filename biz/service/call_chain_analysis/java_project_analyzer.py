@@ -5,6 +5,8 @@ import time
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Tuple, Optional
 
+
+
 from biz.service.call_chain_analysis.file_util import FileUtil
 from biz.utils.log import logger
 
@@ -15,6 +17,7 @@ class ClassSignature:
     class_source_code: str
     field_signature_name: List[str]
     method_signature_name: List[str]
+    simple_method_signature_name_map: Dict[str, str]
     class_path: str
 
 
@@ -26,10 +29,15 @@ class MethodSignature:
     usage_method_signature_name: List[str]
 
 
+
 @dataclass
 class FieldSignature:
+    field_class_signature_name: str
+    field_name: str
     field_signature_name: str
     field_source_code: str
+    
+
 
 
 class JavaProjectAnalyzer:
@@ -76,9 +84,12 @@ class JavaProjectAnalyzer:
         # 包名匹配
         self._package_pattern = re.compile(r'package\s+([\w.]+);')
         
-        # 类定义匹配
-        self._class_pattern = re.compile(r'(?:public\s+)?(?:abstract\s+)?(?:final\s+)?class\s+(\w+)(?:\s+extends\s+[^{]+)?(?:\s+implements\s+[^{]+)?\s*\{')
-        self._class_pattern_simple = re.compile(r'(?:public\s+)?(?:abstract\s+)?(?:final\s+)?class\s+\w+(?:\s+extends\s+[^{]+)?(?:\s+implements\s+[^{]+)?\s*\{')
+        # import语句匹配
+        self._import_pattern = re.compile(r'import\s+(?:static\s+)?([\w.*]+);')
+        
+        # 类和接口定义匹配
+        self._class_pattern = re.compile(r'(?:public\s+)?(?:abstract\s+)?(?:final\s+)?(?:class|interface)\s+(\w+)(?:\s+extends\s+[^{]+)?(?:\s+implements\s+[^{]+)?\s*\{')
+        self._class_pattern_simple = re.compile(r'(?:public\s+)?(?:abstract\s+)?(?:final\s+)?(?:class|interface)\s+\w+(?:\s+extends\s+[^{]+)?(?:\s+implements\s+[^{]+)?\s*\{')
         
         # 字段匹配 - 优化版本
         self._field_pattern = re.compile(r'(?:private|public|protected)?\s*(?:static\s+)?(?:final\s+)?[\w<>\[\]]+\s+\w+\s*[=;]')
@@ -170,17 +181,18 @@ class JavaProjectAnalyzer:
 
               # 为 self.method_signatures 建立 key 的 map 索引，提高查找效率
         # key: 移除括号的方法名, value: 完整方法签名
-
         self._build_simple_method_sig_map()
 
         # 分析所有方法之间的调用关系
         start_time = time.time()
 
-        for method_sig_name, method_sig in self.method_signatures.items():
-            # 分析方法中调用的其他方法，直接传入类签名名称进行过滤
+        for  method_source_code,method_sig in self.method_signatures.items():
+            # 使用正则表达式分析方法调用
             used_methods = self._analyze_method_method_usage(
                 method_sig.method_source_code,
-                method_sig
+                method_sig.usaged_fields,
+                method_sig.class_signature_name
+
             )
             
             # 更新MethodSignature中的usage_method_signature_name
@@ -238,9 +250,13 @@ class JavaProjectAnalyzer:
             package_match = self._package_pattern.search(content)
             package_name = package_match.group(1) if package_match else ""
             
+            # 解析import语句
+            import_mappings = self._parse_imports(content)
+            
             file_info = {
                 'class_path': class_path,
-                'package_name': package_name
+                'package_name': package_name,
+                'import_mappings': import_mappings
             }
             
             # 分析所有类
@@ -252,6 +268,103 @@ class JavaProjectAnalyzer:
                 
         except Exception as e:
             logger.error(f"解析文件 {file_path} 时出错: {e}")
+
+    def _parse_imports(self, content: str) -> Dict[str, str]:
+        """
+        解析Java文件中的import语句，返回类名到完整包名的映射
+        
+        Args:
+            content: Java文件内容
+            
+        Returns:
+            Dict[str, str]: 类名到完整包名的映射，例如 {"User" -> "com.example.model.User"}
+        """
+        import_mappings = {}
+        
+        # 查找所有import语句
+        import_matches = self._import_pattern.finditer(content)
+        
+        for match in import_matches:
+            import_statement = match.group(1)
+            
+            # 处理通配符import，如 import com.example.model.*;
+            if import_statement.endswith('.*'):
+                # 对于通配符import，我们无法直接映射，需要在实际使用时处理
+                continue
+            
+            # 提取类名（最后一个点号后的部分）
+            if '.' in import_statement:
+                class_name = import_statement.split('.')[-1]
+                import_mappings[class_name] = import_statement
+        
+        return import_mappings
+
+    def _generate_impl_signatures(self, class_signature_name: str) -> List[str]:
+        """
+        为给定的类签名生成包含 Impl 结尾的实现类版本
+        
+        Args:
+            class_signature_name: 原始类签名，如 "com.qnvip.qwen.service.ChatHistoryCommentService"
+            
+        Returns:
+            List[str]: 包含原始签名和 Impl 版本的列表
+        """
+        signatures = [class_signature_name]
+        
+        # 如果类名不包含 Impl 结尾，则添加 Impl 版本
+        if not class_signature_name.endswith('Impl'):
+            impl_signature = class_signature_name + 'Impl'
+            signatures.append(impl_signature)
+        
+        return signatures
+
+    def _resolve_field_type_package(self, field_type: str, import_mappings: Dict[str, str], current_class_signature_name: str) -> str:
+        """
+        根据字段类型和import信息确定正确的包名
+        
+        Args:
+            field_type: 字段类型，如 "User", "List<User>", "String"
+            import_mappings: import映射，类名到完整包名的映射
+            current_class_signature_name: 当前类的完整签名名称
+            
+        Returns:
+            字段类型的完整包名
+        """
+        if not field_type:
+            return current_class_signature_name
+        
+        # 处理泛型类型，如 List<User> -> User
+        base_type = field_type
+        if '<' in field_type:
+            # 提取泛型参数
+            generic_start = field_type.find('<')
+            generic_end = field_type.rfind('>')
+            if generic_start != -1 and generic_end != -1:
+                generic_content = field_type[generic_start + 1:generic_end]
+                # 对于泛型，我们主要关心泛型参数的类型
+                # 这里简化处理，只取第一个泛型参数
+                if ',' in generic_content:
+                    base_type = generic_content.split(',')[0].strip()
+                else:
+                    base_type = generic_content.strip()
+        
+        # 处理数组类型，如 String[] -> String
+        if base_type.endswith('[]'):
+            base_type = base_type[:-2]
+        
+        # 处理基本类型和常见类型
+        basic_types = ['String', 'Integer', 'Long', 'Double', 'Float', 'Boolean', 'Date', 'List', 'Map', 'Set', 'ArrayList', 'HashMap', 'HashSet']
+        if base_type in basic_types:
+            # 对于基本类型，使用当前类的包名
+            return current_class_signature_name
+        
+        # 检查import映射中是否有这个类型
+        if base_type in import_mappings:
+            return import_mappings[base_type]
+        
+        # 如果import映射中没有，假设是同一个包中的类型
+        current_package = '.'.join(current_class_signature_name.split('.')[:-1])
+        return f"{current_package}.{base_type}"
 
     def _analyze_single_class(self, content: str, class_match, file_info: Dict[str, str]):
         """分析单个类"""
@@ -277,7 +390,7 @@ class JavaProjectAnalyzer:
         
         # 分析字段
         start_time = time.time()
-        field_names = self._analyze_class_fields(class_content_with_comments, class_signature_name)
+        field_names = self._analyze_class_fields(class_content_with_comments, class_signature_name, file_info['import_mappings'])
         field_analysis_time = time.time() - start_time
         if field_analysis_time > 0.5:
             logger.info(f"分析类 {class_signature_name} 字段完成，耗时: {field_analysis_time:.3f}秒，字段数量: {len(field_names)}")
@@ -298,7 +411,7 @@ class JavaProjectAnalyzer:
 
 
 
-    def _analyze_class_fields(self, class_content: str, class_signature_name: str) -> List[str]:
+    def _analyze_class_fields(self, class_content: str, class_signature_name: str, import_mappings: Dict[str, str]) -> List[str]:
         """分析类中的字段"""
         start_time = time.time()
         
@@ -312,13 +425,26 @@ class JavaProjectAnalyzer:
             # 从字段代码中提取字段名
             match = self._field_name_pattern.search(field)
             field_name = match.group(1) if match else ""
-            field_signature_name = f"{class_signature_name}.{field_name}"
-            field_names.append(field_signature_name)
             
-            self.field_signatures[field_signature_name] = FieldSignature(
-                field_signature_name=field_signature_name,
-                field_source_code=self.format_java_code(field.strip())
-            )
+            # 从字段代码中提取字段类型
+            field_type = self._extract_field_type(field)
+            
+            # 根据字段类型和import信息确定正确的包名
+            field_class_signature_name = self._resolve_field_type_package(field_type, import_mappings, class_signature_name)
+            
+            # 构建字段签名名称，包含原始版本和 Impl 版本
+            field_class_signatures = self._generate_impl_signatures(field_class_signature_name)
+            
+            for field_class_sig in field_class_signatures:
+                field_signature_name = f"{field_class_sig}.{field_name}"
+                field_names.append(field_signature_name)
+                
+                self.field_signatures[field_signature_name] = FieldSignature(
+                    field_class_signature_name=field_class_sig,
+                    field_name=field_name,
+                    field_signature_name=field_signature_name,
+                    field_source_code=self.format_java_code(field.strip())
+                )
         
         process_time = time.time() - process_start_time
         total_time = time.time() - start_time
@@ -329,39 +455,54 @@ class JavaProjectAnalyzer:
         return field_names
 
     def _analyze_class_methods(self, class_content: str, class_signature_name: str, field_names: List[str]) -> List[str]:
-        """分析类中的方法"""
+        """分析类中的方法 - 原始正则表达式方法"""
         methods = self._extract_methods(class_content)
         method_names = []
         
         for method in methods:
             method_signature = self._extract_method_signature(method)
-            method_signature_name = f"{class_signature_name}.{method_signature}"
             
-            # 过滤检查：方法名过滤
-            should_filter = False
-            for filter_keyword in self.METHOD_FILTER_KEYWORDS:
-                if filter_keyword in method_signature_name.lower():
-                    # logger.debug(f"过滤方法: {method_signature_name} (包含关键词: {filter_keyword})")
-                    should_filter = True
-                    break
+            # 为类签名生成原始版本和 Impl 版本
+            class_signatures = self._generate_impl_signatures(class_signature_name)
             
-            if should_filter:
-                continue
-            
-            method_names.append(method_signature_name)
-            
-            # 分析方法中使用的字段
-            used_fields = self._analyze_method_field_usage(method, field_names)
-            
-            # 创建MethodSignature，稍后更新调用的方法信息
-            self.method_signatures[method_signature_name] = MethodSignature(
-                class_signature_name=class_signature_name,
-                method_source_code=self.format_java_code(method.strip()),
-                usaged_fields=used_fields,
-                usage_method_signature_name=[]  # 稍后更新
-            )
+            for class_sig in class_signatures:
+                method_signature_name = f"{class_sig}.{method_signature}"
+                
+                # 过滤检查：方法名过滤
+                should_filter = False
+                for filter_keyword in self.METHOD_FILTER_KEYWORDS:
+                    if filter_keyword in method_signature_name.lower():
+                        # logger.debug(f"过滤方法: {method_signature_name} (包含关键词: {filter_keyword})")
+                        should_filter = True
+                        break
+                
+                if should_filter:
+                    continue
+                
+                method_names.append(method_signature_name)
+                
+                # 分析方法中使用的字段
+                used_fields = self._analyze_method_field_usage(method, field_names)
+                
+                # 创建MethodSignature，稍后更新调用的方法信息
+                self.method_signatures[method_signature_name] = MethodSignature(
+                    class_signature_name=class_sig,
+                    method_source_code=self.format_java_code(method.strip()),
+                    usaged_fields=used_fields,
+                    usage_method_signature_name=[]  # 稍后更新
+                )
         
         return method_names
+
+
+
+
+
+
+
+
+
+
 
     def _create_class_signature(self, class_content: str, class_signature_name: str, 
                                field_names: List[str], method_names: List[str], class_path: str):
@@ -370,13 +511,58 @@ class JavaProjectAnalyzer:
         # 提取类定义行和注释
         simple_class = self._extract_simple_class_source_code(class_content)
         
+        # 从完整的方法签名中提取简单的方法签名名称
+        simple_method_signature_name_map = self._extract_simple_method_signature_names(method_names)
+        
         self.class_signatures[class_signature_name] = ClassSignature(
             class_signature_name=class_signature_name,
             class_source_code=simple_class,
             field_signature_name=field_names,
             method_signature_name=method_names,
+            simple_method_signature_name_map=simple_method_signature_name_map,
             class_path=class_path
         )
+    
+    def _extract_simple_method_signature_names(self, method_names: List[str]) -> Dict[str, str]:
+        """
+        从完整的方法签名中提取简单的方法签名名称，返回一个map，key为method_signature_name，value为simple_method_name
+        
+        Args:
+            method_names: 完整的方法签名名称列表，例如：
+                ["com.qnvip.qwen.dal.dao.impl.ChatHistoryCommentDaoServiceImpl.page(IPage<ChatHistoryCommentDO>, ChatHistoryCommentQueryDTO)"]
+        
+        Returns:
+            简单的方法签名名称map，例如：
+                {"com.qnvip.qwen.dal.dao.impl.ChatHistoryCommentDaoServiceImpl.page(IPage<ChatHistoryCommentDO>, ChatHistoryCommentQueryDTO)": "page"}
+        """
+        simple_method_signature_name_map = {}
+        
+        for method_name in method_names:
+            # 提取方法名部分（不包含参数列表和括号）
+            # 例如：com.qnvip.qwen.dal.dao.impl.ChatHistoryCommentDaoServiceImpl.page(IPage<ChatHistoryCommentDO>, ChatHistoryCommentQueryDTO)
+            # 需要提取：page
+            
+            # 找到最后一个点号的位置，获取方法名和参数部分
+            last_dot_index = method_name.rfind('.')
+            if last_dot_index != -1:
+                method_with_params = method_name[last_dot_index + 1:]
+                # 找到括号的位置，只取方法名部分
+                paren_index = method_with_params.find('(')
+                if paren_index != -1:
+                    simple_method_name = method_with_params[:paren_index]
+                else:
+                    simple_method_name = method_with_params
+                simple_method_signature_name_map[method_name] = simple_method_name
+            else:
+                # 如果没有找到点号，直接使用方法名（去掉括号）
+                paren_index = method_name.find('(')
+                if paren_index != -1:
+                    simple_method_name = method_name[:paren_index]
+                else:
+                    simple_method_name = method_name
+                simple_method_signature_name_map[method_name] = simple_method_name
+        
+        return simple_method_signature_name_map
     
     def _extract_simple_class_source_code(self, class_content: str) -> str:
         """
@@ -430,6 +616,10 @@ class JavaProjectAnalyzer:
         
         # 向前查找类定义之前的注释
         comment_start = self._find_class_comment_start(content, class_start)
+        
+        # 确保注释开始位置不为负数
+        if comment_start < 0:
+            comment_start = 0
         
         # 提取包含注释的类内容
         class_content_with_comments = content[comment_start:class_end]
@@ -670,7 +860,7 @@ class JavaProjectAnalyzer:
         return pos + 1
     
     def _find_annotation_start_optimized(self, content: str, method_start: int) -> int:
-        """查找注解的开始位置 - 优化版本"""
+        """查找注解的开始位置 - 优化版本，避免包含字段定义"""
         # 从方法开始位置向前查找，最多查找200个字符
         search_start = max(0, method_start - 200)
         search_content = content[search_start:method_start]
@@ -681,9 +871,32 @@ class JavaProjectAnalyzer:
         if not annotations:
             return method_start
         
-        # 返回最后一个注解的开始位置
-        last_annotation = annotations[-1]
-        return search_start + last_annotation.start()
+        # 从最后一个注解开始，向前检查是否属于方法定义
+        # 需要确保注解后面紧跟的是方法定义，而不是字段定义
+        for i in range(len(annotations) - 1, -1, -1):
+            annotation = annotations[i]
+            annotation_start = search_start + annotation.start()
+            
+            # 使用辅助方法判断注解是否属于方法定义
+            if self._is_method_annotation(content, annotation_start, method_start):
+                return annotation_start
+        
+        # 如果没有找到合适的方法注解，返回方法开始位置
+        return method_start
+    
+    def _is_method_annotation(self, content: str, annotation_start: int, method_start: int) -> bool:
+        """判断注解是否属于方法定义"""
+        # 获取注解后面到方法开始之间的内容
+        between_content = content[annotation_start:method_start].strip()
+        
+        # 如果中间内容包含分号，说明注解属于字段定义
+        if ';' in between_content:
+            return False
+            
+        # 检查是否匹配方法定义模式
+        # 方法定义通常包含：修饰符 + 返回类型 + 方法名 + 参数列表 + {
+        method_def_pattern = r'(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?[\w<>\[\]]+\s+\w+\s*\([^)]*\)\s*\{'
+        return bool(re.search(method_def_pattern, between_content))
     
     def _find_annotation_start(self, content: str, end_pos: int) -> int:
         """查找注解的开始位置 - 优化版本"""
@@ -781,68 +994,73 @@ class JavaProjectAnalyzer:
         
         return used_fields
 
-    def _analyze_method_method_usage(self, method_code: str, method_sig) -> List[
-        str]:
+    def _analyze_method_method_usage(self, method_code: str, usaged_fields: List[str],class_signature_name:str) -> List[str]:
         """
         分析方法中调用的其他方法
 
         Args:
             method_code: 方法源代码
-            method_sig: 方法签名对象
+            usaged_fields: 方法中使用的字段列表
 
-        Returns:
-            过滤后的方法调用列表
+        Returns: 方法中调用的方法列表
         """
-        # 获取字段类型信息（如果提供了类签名名称）
-        field_signature_name = method_sig.usaged_fields if method_sig else []
-        if not field_signature_name:
-            return []
-
-
-        # 提取字段名（去掉完整的类签名，只保留字段名）
-        field_names = []
-        for field_sig in field_signature_name:
-            # 从完整签名中提取字段名，例如从 'qnvip.rent.activity.dao.impl.ActivityCustomerDaoServiceImpl.activityCustomerMapper'
-            # 提取出 'activityCustomerMapper'
-            if '.' in field_sig:
-                field_name = field_sig.split('.')[-1]
-                field_names.append(field_name)
-            else:
-                field_names.append(field_sig)
-
-        # 用于存储找到的方法调用
         method_calls = []
-
-        # 正则表达式模式匹配方法调用
-        # 匹配模式: 字段名.方法名(参数)
-        for field_name in field_names:
-            # 匹配 field_name.method_name(...) 的模式
-            pattern = rf'{re.escape(field_name)}\.(\w+)\s*\('
-            matches = re.findall(pattern, method_code)
-
-            for method_name in matches:
-                # 构建完整的方法签名
-                # 从字段签名中提取类名部分，然后加上方法名
-                for field_sig in field_signature_name:
-                    if field_sig.endswith(f'.{field_name}'):
-                        class_part = field_sig.rsplit('.', 1)[0]  # 去掉字段名部分
-                        full_method_sig = f"{class_part}.{method_name}"
-                        method_calls.append(full_method_sig)
-                        break
-  
         
-        # 使用 map 查找，直接找出在 method_signatures 中存在的方法调用
-        # 这比循环遍历更高效，时间复杂度从 O(n*m) 降低到 O(n)
-        realcall = set()  # 使用set避免重复
-        for method_call in method_calls:
-            if method_call in self._method_signatures_map:
-                # 将list中的所有方法签名添加到realcall中
-                realcall.update(self._method_signatures_map[method_call])
-
+        # 遍历usaged_fields，分析每个字段的方法调用
+        for field_signature_name in usaged_fields:
+            # 从字段签名中提取field_class_signature_name和field_name
+            if field_signature_name not in self.field_signatures:
+                continue
+                
+            field_sig = self.field_signatures[field_signature_name]
+            field_class_signature_name = field_sig.field_class_signature_name
+            field_name = field_sig.field_name
+            
+            # 从self.class_signatures中获取对应的simple_method_signature_name_map
+            if field_class_signature_name not in self.class_signatures:
+                continue
+                
+            class_sig = self.class_signatures[field_class_signature_name]
+            simple_method_signature_name_map = class_sig.simple_method_signature_name_map
+            
+            # 遍历simple_method_signature_name_map，检查字段方法调用
+            for method_signature_name, simple_method_name in simple_method_signature_name_map.items():
+                # field_name与simple_method_name用"."连接得到字段方法调用
+                field_method_call = f"{field_name}.{simple_method_name}"
+                
+                # 在method_code中查找字段方法调用
+                if field_method_call in method_code:
+                    method_calls.append(method_signature_name)
         
-        # 转换为列表并返回
-        return list(realcall)
+        return method_calls
     
+    def _extract_method_name_from_code(self, method_code: str) -> str:
+        """从方法代码中提取方法名"""
+        if not method_code:
+            return ""
+        
+        # 使用正则表达式匹配方法定义，提取方法名
+        # 匹配模式：修饰符 + 返回类型 + 方法名 + 参数列表
+        method_def_pattern = r'(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?[\w<>\[\]]+\s+(\w+)\s*\([^)]*\)'
+        match = re.search(method_def_pattern, method_code)
+        
+        if match:
+            return match.group(1)
+        
+        return ""
+    
+    def _extract_current_method_name(self, method_sig) -> str:
+        """从方法签名中提取当前方法名（保持向后兼容）"""
+        if not method_sig or not hasattr(method_sig, 'method_source_code'):
+            return ""
+        
+        return self._extract_method_name_from_code(method_sig.method_source_code)
+
+
+
+
+
+
 
     
     def _get_field_types(self, field_signatures: List[str]) -> List[str]:
@@ -859,19 +1077,19 @@ class JavaProjectAnalyzer:
         for field_sig_name in field_signatures:
             if field_sig_name in self.field_signatures:
                 field_sig = self.field_signatures[field_sig_name]
-                # 从字段签名中提取类名（包含包信息）
-                class_name = '.'.join(field_sig_name.split('.')[:-1])
+                # 使用字段签名中的field_class_signature_name，这个已经包含了正确的包信息
+                field_class_name = field_sig.field_class_signature_name
+                
                 # 从字段源代码中提取类型
                 field_type = self._extract_field_type(field_sig.field_source_code)
                 if field_type:
                     # 对于基本类型，直接跳过
-                    if field_type in ['String', 'Integer', 'Long', 'Double', 'Float', 'Boolean', 'Date', 'List', 'Map', 'Set']:
+                    basic_types = ['String', 'Integer', 'Long', 'Double', 'Float', 'Boolean', 'Date', 'List', 'Map', 'Set', 'ArrayList', 'HashMap', 'HashSet']
+                    if field_type in basic_types:
                         continue
                     else:
-                        # 对于自定义类型，尝试构建完整的类名
-                        # 假设自定义类型在同一个包中
-                        full_class_name = f"{class_name.rsplit('.', 1)[0]}.{field_type}"
-                        field_types.append(full_class_name)
+                        # 对于自定义类型，使用已经解析好的field_class_signature_name
+                        field_types.append(field_class_name)
         return field_types
     
     def _extract_field_type(self, field_source_code: str) -> str:
