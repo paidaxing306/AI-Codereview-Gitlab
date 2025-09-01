@@ -365,6 +365,6 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
 
         # 将review结果提交到Gitlab的 notes
         handler.add_merge_request_notes(
-            f'Call Chain Analysis Result for Change {change_index}: \n{review_result}')
+            f'变更内容 {change_index}: \n{review_result}')
 
         logger.info(f"Change {change_index} 的调用链分析完成")

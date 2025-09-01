@@ -54,11 +54,9 @@ class ChangedSignatureExtractor:
                 
                 logger.info(f"解析第 {i+1} 个Java文件变更: {file_path}")
                 
-                # 先过滤diff_content
-                filtered_diff_content = self._filter_diff_content(diff_content)
-                
+
                 # 解析diff获取变更前后的代码
-                old_code, new_code = self._parse_diff_content(filtered_diff_content)
+                old_code, new_code = self._parse_diff_content(diff_content)
                 
                 # 如果new_code为空则跳过
                 if not new_code or not new_code.strip():
@@ -74,7 +72,7 @@ class ChangedSignatureExtractor:
                         'old_code': old_code,
                         'new_code': new_code,
                         'file_path': file_path,
-                        'diffs_text': filtered_diff_content
+                        'diffs_text': diff_content
                     }
                     logger.info(f"Change {i} 的方法签名: {method_signatures}")
                 else:
@@ -108,44 +106,13 @@ class ChangedSignatureExtractor:
         diff_parser.parse_diff()
         return diff_parser.get_old_code(), diff_parser.get_new_code()
 
-    def _filter_diff_content(self, diff_content: str) -> str:
-        """
-        过滤diff内容，移除package、import行和空行
-        
-        Args:
-            diff_content: 原始diff内容
-            
-        Returns:
-            过滤后的diff内容
-        """
-        if not diff_content:
-            return diff_content
-            
-        lines = diff_content.split('\n')
-        filtered_lines = []
-        
-        for line in lines:
-            # 跳过空行
-            if not line.strip():
-                continue
-            # 跳过以+package、-package、+import、-import开头的行
-            if (line.startswith('+import') or line.startswith('-import')):
-                continue
-            if line.startswith('@@') and  line.startswith('@@'):
-                continue
-            # 跳过strip后以+、-开头的行
-            stripped_line = line.strip()
-            if stripped_line == '+' or stripped_line == '-':
-                continue
-            filtered_lines.append(line)
-        
-        return '\n'.join(filtered_lines)
+
 
     def _extract_method_signatures_from_code(self, code: str, file_path: str, analysis_result_file: str = None) -> List[str]:
         """从代码片段中提取方法签名，通过查找包含该代码片段的完整方法"""
         if not code or not file_path.endswith('.java'):
             return []
-        
+
         try:
             # 1. 根据 file_path 找出对应的文件
             actual_file_path = self._find_actual_file_path(file_path)
@@ -174,29 +141,159 @@ class ChangedSignatureExtractor:
                 logger.warn(f"类 {class_signature_name} 中没有找到方法签名")
                 return []
             
-            # 5. 对每个方法签名，提取 method_source_code 并与传入的 code 进行匹配
-            matched_method_signatures = []
-            cleaned_code = self._clean_code_snippet(code)
-            
-            for method_signature in method_signatures:
-                method_data = analysis_data.get('method_signatures', {}).get(method_signature)
-                if not method_data:
-                    continue
-                
-                method_source_code = method_data.get('method_source_code', '')
-                if not method_source_code:
-                    continue
-                
-                # 检查方法源码是否包含代码片段
-                if self._contains_code_snippet(method_source_code, cleaned_code):
-                    matched_method_signatures.append(method_signature)
-                    logger.info(f"找到匹配的方法签名: {method_signature}")
+            # 5. 从代码片段中直接提取方法签名，而不是依赖_contains_code_snippet
+            matched_method_signatures = self._extract_method_signatures_from_code_snippet(code, class_signature_name)
             
             return matched_method_signatures
             
         except Exception as e:
             logger.error(f"提取方法签名时发生错误: {str(e)}")
             return []
+
+    def _extract_method_signatures_from_code_snippet(self, code: str, class_signature_name: str) -> List[str]:
+        """
+        直接复用 JavaProjectAnalyzer 的方法提取签名
+        """
+        if not code or not class_signature_name:
+            return []
+        analyzer = JavaProjectAnalyzer()
+        results = []
+        for m in analyzer._method_pattern.finditer(code):
+            method_code = analyzer._extract_method_content_optimized(code, m.start())
+            sig = analyzer._extract_method_signature(method_code)
+            if sig:
+                results.append(f"{class_signature_name}.{sig}")
+        return results
+
+    def _extract_method_content_from_snippet(self, code: str, method_start: int) -> str:
+        """
+        从代码片段中提取方法的完整内容（包括注解）
+        
+        Args:
+            code: 代码片段
+            method_start: 方法开始位置
+            
+        Returns:
+            方法的完整内容
+        """
+        if method_start >= len(code):
+            return ""
+        
+        # 找到方法体的结束位置
+        brace_count = 0
+        start_brace = False
+        method_end = method_start
+        
+        for i in range(method_start, len(code)):
+            char = code[i]
+            if char == '{':
+                if not start_brace:
+                    start_brace = True
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if start_brace and brace_count == 0:
+                    method_end = i + 1
+                    break
+        
+        # 向前查找注解开始位置
+        annotation_start = self._find_annotation_start_in_snippet(code, method_start)
+        
+        return code[annotation_start:method_end]
+
+    def _find_annotation_start_in_snippet(self, code: str, method_start: int) -> int:
+        """
+        在代码片段中查找注解的开始位置
+        
+        Args:
+            code: 代码片段
+            method_start: 方法开始位置
+            
+        Returns:
+            注解开始位置
+        """
+        # 从方法开始位置向前查找，最多查找200个字符
+        search_start = max(0, method_start - 200)
+        search_content = code[search_start:method_start]
+        
+        # 查找所有注解
+        annotation_pattern = re.compile(r'@\w+(?:\s*\([^)]*\))?')
+        annotations = list(annotation_pattern.finditer(search_content))
+        
+        if not annotations:
+            return method_start
+        
+        # 返回最后一个注解的开始位置
+        last_annotation = annotations[-1]
+        return search_start + last_annotation.start()
+
+    def _extract_method_signature_from_snippet(self, method_code: str, method_signature_pattern, 
+                                             method_return_type_pattern, param_pattern, param_type_name_pattern) -> str:
+        """
+        从方法代码中提取方法签名（移除返回类型和参数名，只保留方法名和参数类型）
+        
+        Args:
+            method_code: 方法代码
+            method_signature_pattern: 方法签名模式
+            method_return_type_pattern: 方法返回类型模式
+            param_pattern: 参数模式
+            param_type_name_pattern: 参数类型名称模式
+            
+        Returns:
+            方法签名
+        """
+        # 匹配方法签名的开始部分（返回类型 + 方法名 + 参数列表）
+        match = method_signature_pattern.search(method_code)
+        if match:
+            signature = match.group(1).strip()
+            # 移除参数名，保留参数类型
+            signature = self._remove_parameter_names_from_snippet(signature, param_pattern, param_type_name_pattern)
+            # 移除返回类型，只保留方法名和参数类型
+            return_type_match = method_return_type_pattern.search(signature)
+            signature = return_type_match.group(1).strip() if return_type_match else signature
+            return signature
+        return ""
+
+    def _remove_parameter_names_from_snippet(self, signature: str, param_pattern, param_type_name_pattern) -> str:
+        """
+        移除方法签名中的参数名，保留参数类型
+        
+        Args:
+            signature: 方法签名
+            param_pattern: 参数模式
+            param_type_name_pattern: 参数类型名称模式
+            
+        Returns:
+            处理后的方法签名
+        """
+        # 匹配参数列表部分
+        match = param_pattern.search(signature)
+        if not match:
+            return signature
+        
+        params_str = match.group(1)
+        if not params_str.strip():
+            return signature
+        
+        # 分割参数
+        params = [p.strip() for p in params_str.split(',')]
+        new_params = []
+        
+        for param in params:
+            if param.strip():
+                # 匹配参数类型和名称：type name 或 type... name
+                param_match = param_type_name_pattern.match(param)
+                if param_match:
+                    param_type = param_match.group(1)
+                    new_params.append(param_type)
+                else:
+                    # 如果没有匹配到，保留原参数（可能是泛型或其他复杂情况）
+                    new_params.append(param)
+        
+        # 重建签名
+        new_params_str = ', '.join(new_params)
+        new_signature = param_pattern.sub(f'({new_params_str})', signature)
+        return new_signature
 
     def _find_class_signature_by_file_path(self, file_path: str, analysis_data: dict) -> str:
         """
@@ -263,20 +360,11 @@ class ChangedSignatureExtractor:
         Returns:
             方法签名列表
         """
-        try:
-            method_signatures = []
-            all_method_signatures = analysis_data.get('method_signatures', {})
-            
-            for method_signature_name, method_data in all_method_signatures.items():
-                method_class_name = method_data.get('class_signature_name', '')
-                if method_class_name == class_signature_name:
-                    method_signatures.append(method_signature_name)
-            
-            return method_signatures
-            
-        except Exception as e:
-            logger.error(f"查找方法签名时发生错误: {str(e)}")
-            return []
+
+        all_method_signatures = analysis_data.get('class_signatures', {})
+        classes=all_method_signatures.get(class_signature_name,{})
+        methods = classes.get('method_signature_name', [])
+        return methods
 
     def _clean_code_snippet(self, code: str) -> str:
         """
