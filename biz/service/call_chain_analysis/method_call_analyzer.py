@@ -274,7 +274,7 @@ def analyze_method_calls_static(changed_methods_file: str, analysis_file: str, p
                     # max_calls_in=3: 分析调用该方法的方法，最多分析3层高度
                     relationship = analyzer.get_complete_method_relationship(
                         method_signature=method_signature,
-                        max_calls_out=0,
+                        max_calls_out=1,
                         max_calls_in=2
                     )
                     
