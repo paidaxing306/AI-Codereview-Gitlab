@@ -195,7 +195,7 @@ def handle_gitlab_webhook(data):
     elif object_kind == "push":
         # 创建一个新进程进行异步处理
         # TODO check if PUSH_REVIEW_ENABLED is needed here
-        handle_queue(handle_push_event, data, gitlab_token, gitlab_url, gitlab_url_slug)
+        # handle_queue(handle_push_event, data, gitlab_token, gitlab_url, gitlab_url_slug)
         # 立马返回响应
         return jsonify(
             {'message': f'Request received(object_kind={object_kind}), will process asynchronously.'}), 200
