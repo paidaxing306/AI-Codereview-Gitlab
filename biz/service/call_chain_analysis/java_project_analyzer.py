@@ -137,7 +137,7 @@ class JavaProjectAnalyzer:
         self.CLASS_FILTER_KEYWORDS = [kw.strip() for kw in class_filter_keywords_str.split(',') if kw.strip()]
 
         # 从环境变量读取过滤关键词配置
-        method_filter_keywords_str = os.environ.get('CODE_ANALYSIS_JAVA_METHOD_FILTER_KEYWORDS', '.getcode(),getbyid')
+        method_filter_keywords_str = os.environ.get('CODE_ANALYSIS_JAVA_METHOD_FILTER_KEYWORDS', '.getcodeUser()')
         self.METHOD_FILTER_KEYWORDS = [kw.strip() for kw in method_filter_keywords_str.split(',') if kw.strip()]
 
     
@@ -891,67 +891,32 @@ class JavaProjectAnalyzer:
         return methods
 
     def _extract_methods_for_interface(self, class_content: str) -> List[str]:
-        """提取接口中的方法定义，专门处理接口中的抽象方法和默认方法"""
-        # 寻找interface body的开始
+        """提取接口中的方法定义，截取interface后第一个{作为开始，最后一个}作为结束，不包括{}，然后使用;分隔"""
+        # 寻找第一个 { 作为开始
         try:
             start_brace_index = class_content.index('{')
         except ValueError:
             return []
 
-        # 寻找匹配的结束括号
-        brace_level = 1
-        end_brace_index = -1
-        for i in range(start_brace_index + 1, len(class_content)):
-            if class_content[i] == '{':
-                brace_level += 1
-            elif class_content[i] == '}':
-                brace_level -= 1
-                if brace_level == 0:
-                    end_brace_index = i
-                    break
-        
-        if end_brace_index == -1:
+        # 寻找最后一个 } 作为结束
+        end_brace_index = class_content.rfind('}')
+        if end_brace_index == -1 or end_brace_index <= start_brace_index:
             return []
 
-        # 提取body内容并按分号分割
+        # 提取 {} 之间的内容，不包括 {} 本身
         body = class_content[start_brace_index + 1:end_brace_index]
-        # 使用正则表达式按分号分割，同时处理default方法体内的分号
-        # 我们寻找一个分号，它后面跟着的不是{ (default 方法)
-        raw_methods = re.split(r';(?!\s*\{)', body)
-
+        
+        # 使用 ; 分隔方法
+        raw_methods = body.split(';')
+        
         methods = []
-        # 合并注解和方法签名
-        current_method_lines = []
-        for part in raw_methods:
-            part = part.strip()
-            if not part:
-                continue
-
-            # 检查这部分是否看起来像一个方法的开始（包含类型和方法名）
-            # 这是一个简单的启发式方法，用于将注解与它们所属的方法关联起来
-            if re.search(r'[\w<>\[\]]+\s+\w+\s*\(', part):
-                current_method_lines.append(part)
-                full_method = "\n".join(current_method_lines) + ';'
-                methods.append(full_method.strip())
-                current_method_lines = []
-            else:
-                # 如果不是，就假定它是一个注解，并将其添加到当前行列表中
-                current_method_lines.append(part)
-
-        # 清理结果，确保格式正确
-        final_methods = []
-        temp_method = ""
-        for method_str in methods:
-            if method_str.count('@') > 0:
-                if temp_method:
-                    final_methods.append(temp_method)
-                temp_method = method_str
-            else:
-                temp_method += "\n" + method_str
-        if temp_method:
-            final_methods.append(temp_method)
-
-        return [m.replace(';;', ';').strip() for m in final_methods if m]
+        for method in raw_methods:
+            method = method.strip()
+            if method:  # 只保留非空的方法
+                # 每个方法保留 ; 结尾
+                methods.append(method + ';')
+        
+        return methods
 
     def _extract_interface_method_content(self, content: str, method_start: int) -> str:
         """提取接口方法的完整内容（包括前面的注解）"""
@@ -1238,9 +1203,7 @@ class JavaProjectAnalyzer:
 
         Returns: 方法中调用的方法列表
         """
-
-        class_sig = self.class_signatures[class_signature_name]
-        if class_sig.class_type == 'interface':
+        if  self.class_signatures[class_signature_name].class_type == 'interface':
             return []
 
         method_calls = []
@@ -1259,8 +1222,7 @@ class JavaProjectAnalyzer:
             if field_class_signature_name not in self.class_signatures:
                 continue
 
-
-
+            class_sig= self.class_signatures[field_class_signature_name]
             simple_method_signature_name_map = class_sig.simple_method_signature_name_map
             
             # 遍历simple_method_signature_name_map，检查字段方法调用
@@ -1457,40 +1419,7 @@ def analyze_java_project(project_path: str) -> Tuple[Dict[str, ClassSignature],
     return analyzer.analyze_project(project_path)
 
 
-def save_and_analysis_to_json(project_path: str, output_file: str = "1_analyze_project.json"):
-    """
-    分析Java项目并保存结果到JSON文件
-    
-    Args:
-        project_path: Java项目根目录路径
-        output_file: 输出JSON文件路径，默认为"1_analyze_project.json"
-        
-    Returns:
-        Dict: 包含分析结果的字典
-    """
-    class_sigs, method_sigs, field_sigs = analyze_java_project(project_path)
-    
-    # 将分析结果合并为一个字典
-    analysis_result = {
-        "class_signatures": {name: asdict(sig) for name, sig in class_sigs.items()},
-        "method_signatures": {name: asdict(sig) for name, sig in method_sigs.items()},
-        "field_signatures": {name: asdict(sig) for name, sig in field_sigs.items()}
-    }
-    
-    # 确保输出目录存在
-    output_dir = os.path.dirname(output_file)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir, exist_ok=True)
-        logger.info(f"创建输出目录: {output_dir}")
-    
-    # 写入JSON文件
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(analysis_result, f, ensure_ascii=False, indent=2)
-    
-    logger.info(f"分析结果已保存到 {output_file}")
-    logger.info(f"类数量: {len(class_sigs)}, 方法数量: {len(method_sigs)}, 字段数量: {len(field_sigs)}")
-    
-    return analysis_result
+
 
 
 def analyze_java_project_static(project_info: dict, workspace_path: str = None) -> Optional[str]:

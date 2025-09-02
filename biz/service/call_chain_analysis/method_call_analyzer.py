@@ -52,48 +52,7 @@ class MethodCallAnalyzer:
                     self.caller_mapping[called_method] = []
                 self.caller_mapping[called_method].append(method_signature)
     
-    def _is_method_in_skip_path(self, method_signature: str) -> bool:
-        """
-        检查方法是否在跳过的路径中
-        
-        Args:
-            method_signature: 方法签名
-            
-        Returns:
-            bool: 如果方法在跳过的路径中返回True，否则返回False
-        """
-        if not self.skip_paths:
-            return False
-        
-        # 获取方法所属的类签名
-        method_info = self.analysis_data["method_signatures"].get(method_signature)
-        if not method_info:
-            return False
-        
-        class_signature_name = method_info.get("class_signature_name")
-        if not class_signature_name:
-            return False
-        
-        # 获取类信息
-        class_info = self.analysis_data["class_signatures"].get(class_signature_name)
-        if not class_info:
-            return False
-        
-        class_path = class_info.get("class_path", "")
-        if not class_path:
-            return False
-        
-        # 标准化类路径，统一使用正斜杠
-        normalized_class_path = class_path.replace('\\', '/').replace(os.sep, '/')
-        
-        # 检查类路径是否在跳过的路径中
-        for skip_path in self.skip_paths:
-            # 标准化跳过路径，统一使用正斜杠
-            normalized_skip_path = skip_path.replace('\\', '/').replace(os.sep, '/')
-            if normalized_class_path.startswith(normalized_skip_path):
-                return True
-        
-        return False
+
     
  
     
@@ -123,9 +82,7 @@ class MethodCallAnalyzer:
             if current_method in visited or current_depth > max_depth:
                 continue
             
-            # 如果方法在跳过的路径中，跳过
-            if self._is_method_in_skip_path(current_method):
-                continue
+
             
             # 标记为已访问
             visited.add(current_method)
@@ -170,9 +127,7 @@ class MethodCallAnalyzer:
             if current_method in visited or current_height > max_height:
                 continue
             
-            # 如果方法在跳过的路径中，跳过
-            if self._is_method_in_skip_path(current_method):
-                continue
+
             
             # 标记为已访问
             visited.add(current_method)
@@ -216,12 +171,6 @@ class MethodCallAnalyzer:
             "calls_out": called_methods,  # 该方法调用的其他方法（向下调用链）
             "calls_in": caller_methods    # 调用该方法的方法（向上调用链）
         }
-    
- 
- 
-    
- 
-    
 
 
 
