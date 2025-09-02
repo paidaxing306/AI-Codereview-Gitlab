@@ -85,7 +85,7 @@ class CallChainAnalysisService:
             # 从整个Java项目中提取所有Java文件路径，对整个项目进行PMD检查
             java_files_to_check = self._extract_java_files_from_changes(changes, project_info['path'])
             pmd_report_file = run_pmd_check_static(project_info['path'], project_info['name'], self.workspace_path,
-                                                   self.plugin_path, java_files_to_check, self.changed_java_files)
+                                                   self.plugin_path, self.changed_java_files)
             if pmd_report_file:
                 logger.info(f"PMD代码检查完成，报告文件: {pmd_report_file}")
                 

@@ -80,6 +80,55 @@ class PMDCheckPlugin:
         logger.info(f"项目 {project_name} 使用 {level_name} 级别 (数字: {level_num})")
         return level_num
 
+
+    def get_change_level(self, project_name: str) -> int:
+        """
+        根据项目名称获取对应的p3c检查级别
+
+        参数:
+            project_name: 项目名称
+
+        返回:
+            级别对应的数字: 1(高级), 2(中级), 3(低级)
+        """
+        # 级别映射
+        level_mapping = {
+            'HIGH': 1,
+            'MIDDLE': 2,
+            'LOW': 3
+        }
+
+        # 获取默认级别
+        default_level = os.environ.get('CODE_ANALYSIS_CHANGE_JAVA_P3C_LEVEL_DEFAULT', 'HIGH')
+        default_level_num = level_mapping.get(default_level.upper(), 1)
+
+        # 获取各级别对应的项目列表
+        high_projects = os.environ.get('CODE_ANALYSIS_CHANGE_JAVA_P3C_LEVEL_HIGH', '').split(',')
+        middle_projects = os.environ.get('CODE_ANALYSIS_CHANGE_JAVA_P3C_LEVEL_MIDDLE', '').split(',')
+        low_projects = os.environ.get('CODE_ANALYSIS_CHANGE_JAVA_P3C_LEVEL_LOW', '').split(',')
+
+        # 清理项目名称（去除空格和空字符串）
+        high_projects = [p.strip() for p in high_projects if p.strip()]
+        middle_projects = [p.strip() for p in middle_projects if p.strip()]
+        low_projects = [p.strip() for p in low_projects if p.strip()]
+
+        # 根据项目名称确定级别
+        if project_name in high_projects:
+            level_num = 1
+            level_name = 'HIGH'
+        elif project_name in middle_projects:
+            level_num = 2
+            level_name = 'MIDDLE'
+        elif project_name in low_projects:
+            level_num = 3
+            level_name = 'LOW'
+        else:
+            level_num = default_level_num
+            level_name = default_level.upper()
+
+        logger.info(f"变更 {project_name} 使用 {level_name} 级别 (数字: {level_num})")
+        return level_num
+
     def filter_violations(self, report_data: Dict) -> Dict:
         """
         根据skip_rule_list过滤violations，并根据文件名关键词过滤文件
@@ -301,181 +350,116 @@ def add_in_change_field_to_report(project_path, report_data: Dict, changed_java_
     return report_data
 
 
-def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_check=None, project_name=None, changed_java_files=None):
-    """
-    运行PMD代码检查并生成报告
-
-    参数:
-        project_path: 项目根目录路径
-        output_file: 输出文件完整路径，如果为None则不保存文件
-        plugin_path: 插件路径，如果为None则使用默认路径
-        files_to_check: 要检查的文件列表，如果为None则检查整个项目
-        project_name: 项目名称，用于确定检查级别
-        changed_java_files: 变更的Java文件路径集合，用于标记in_change字段
-        
-    返回:
-        成功时返回报告数据字典，失败时返回None
-    """
-
-    # 设置PMD 6.55相关路径
-    if plugin_path is None:
-        logger.error("错误：plugin_path参数不能为None")
-        return None
-        
-    plugin_dir = plugin_path 
-    pmd_bin_dir = os.path.join(plugin_dir, "pmd-bin-6.55.0", "bin")
-    pmd_lib_dir = os.path.join(plugin_dir, "pmd-bin-6.55.0", "lib")
-
-    logger.info(f"项目根目录: {project_path}")
-    logger.info(f"Plugin目录: {plugin_dir}")
-    logger.info(f"PMD库目录: {pmd_lib_dir}")
-    logger.info("使用PMD 6.55版本")
-
-    # 检查项目路径是否存在
-    if not os.path.exists(project_path):
-        logger.error(f"错误：项目路径不存在: {project_path}")
+def run_pmd_check(project_path, output_file=None, plugin_path=None, project_name=None, changed_java_files=None):
+    """运行PMD代码检查并生成报告"""
+    # 卫语句：检查必要参数
+    if not plugin_path or not os.path.exists(project_path):
+        logger.error("参数错误：plugin_path不能为空或项目路径不存在")
         return None
 
-    # 获取项目对应的检查级别
-    pmd_plugin = PMDCheckPlugin()
+    # 获取检查级别
+    min_level = PMDCheckPlugin().get_project_level(project_name)
 
-    min_level = pmd_plugin.get_project_level(project_name)
+    # 构建命令
+    command = _build_pmd_command(project_path, min_level, plugin_path)
+    if not command:
+        return None
+
+    # 执行PMD检查
+    result = subprocess.run(command, capture_output=True, text=True)
+    logger.info(f"执行命令: {' '.join(command)}")
+
+    # 卫语句：检查执行结果
+    if result.returncode not in [0, 4]:
+        logger.error(f"PMD检查失败，返回代码: {result.returncode}")
+        return None
+
+    # 处理输出
+    report_data = _process_pmd_output(result, project_path, changed_java_files)
+    if not report_data:
+        return None
+
+    # 保存报告
+    if output_file and not _save_report(report_data, output_file):
+        return None
+
+    return report_data
 
 
-    # 根据操作系统选择执行方式
-    if os.name == 'nt':  # Windows系统
-        logger.info("检测到Windows系统，使用Java命令")
+def _build_pmd_command(project_path, min_level, plugin_path):
+    """构建PMD命令"""
+    # 设置PMD路径
+    pmd_bin_dir = os.path.join(plugin_path, "pmd-bin-6.55.0", "bin")
+    pmd_lib_dir = os.path.join(plugin_path, "pmd-bin-6.55.0", "lib")
 
-        # 检查PMD库目录是否存在
+    logger.info(f"项目路径: {project_path}, PMD库目录: {pmd_lib_dir}")
+
+    rulesets = [
+        "rulesets/java/ali-comment.xml", "rulesets/java/ali-constant.xml",
+        "rulesets/java/ali-exception.xml", "rulesets/java/ali-flowcontrol.xml",
+        "rulesets/java/ali-naming.xml", "rulesets/java/ali-oop.xml",
+        "rulesets/java/ali-orm.xml", "rulesets/java/ali-other.xml",
+        "rulesets/java/ali-set.xml"
+    ]
+    
+    base_args = ["-d", project_path, "--minimum-priority", "3", "-R"] + rulesets + ["-f", "json"]
+    
+    if os.name == 'nt':  # Windows
         if not os.path.exists(pmd_lib_dir):
-            logger.error(f"错误：PMD库目录不存在: {pmd_lib_dir}")
+            logger.error(f"PMD库目录不存在: {pmd_lib_dir}")
             return None
-
-        # 手动收集所有 lib 下的 jar
+        
         all_jars = glob.glob(os.path.join(pmd_lib_dir, "*.jar"))
         classpath = ";".join(all_jars)
-
         logger.info(f"找到 {len(all_jars)} 个JAR文件")
-
-        # 构建基础命令
-        command = [
-            "java",
-            "-cp", classpath,
-            "net.sourceforge.pmd.PMD",
-            "-d", project_path,
-            "--minimum-priority", str(min_level),
-            "-R",
-            "rulesets/java/ali-comment.xml",
-            "rulesets/java/ali-constant.xml",
-            "rulesets/java/ali-exception.xml",
-            "rulesets/java/ali-flowcontrol.xml",
-            "rulesets/java/ali-naming.xml",
-            "rulesets/java/ali-oop.xml",
-            "rulesets/java/ali-orm.xml",
-            "rulesets/java/ali-other.xml",
-            "rulesets/java/ali-set.xml",
-            "-f", "json",
-        ]
-
-    else:  # Linux/Unix/macOS系统
-        logger.info("检测到Linux/Unix/macOS系统，使用run.sh脚本")
-
-        # 检查run.sh脚本是否存在
+        
+        return ["java", "-cp", classpath, "net.sourceforge.pmd.PMD"] + base_args
+    else:  # Linux/Unix/macOS
         run_sh_path = os.path.join(pmd_bin_dir, "run.sh")
         if not os.path.exists(run_sh_path):
-            logger.error(f"错误：run.sh脚本不存在: {run_sh_path}")
+            logger.error(f"run.sh脚本不存在: {run_sh_path}")
             return None
-
-        # 确保脚本有执行权限
+        
         os.chmod(run_sh_path, 0o755)
+        return [run_sh_path, "pmd"] + base_args
 
-        # 构建基础命令
-        command = [
-            run_sh_path,
-            "pmd",
-            "-d", project_path,
-            "--minimum-priority", str(min_level),
-            "-R",
-            "rulesets/java/ali-comment.xml",
-            "rulesets/java/ali-constant.xml",
-            "rulesets/java/ali-exception.xml",
-            "rulesets/java/ali-flowcontrol.xml",
-            "rulesets/java/ali-naming.xml",
-            "rulesets/java/ali-oop.xml",
-            "rulesets/java/ali-orm.xml",
-            "rulesets/java/ali-other.xml",
-            "rulesets/java/ali-set.xml",
-            "-f", "json",
-        ]
 
-    logger.info("将对整个项目进行PMD检查")
-
+def _process_pmd_output(result, project_path, changed_java_files):
+    """处理PMD输出"""
+    if result.stderr:
+        logger.warn(f"警告信息: {result.stderr}")
+    
+    if not result.stdout:
+        logger.warn("PMD没有输出任何内容")
+        return None
+    
     try:
-        logger.info("运行命令:\n" + " ".join(command))
-        # 执行命令并捕获输出
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True
-        )
-
-        # 检查PMD是否成功运行（返回代码0表示无问题，4表示发现问题）
-        if result.returncode in [0, 4]:
-            logger.info("PMD检查完成")
-            if result.stderr:
-                logger.warn("警告信息:")
-                logger.warn(result.stderr)
-
-            # PMD 6.55 直接输出到stdout，不需要读取文件
-            if result.stdout:
-                try:
-                    report_data = json.loads(result.stdout)
-
-                    # 创建PMD检查插件实例并过滤violations
-                    pmd_plugin = PMDCheckPlugin()
-                    report_data = pmd_plugin.filter_violations(report_data)
-
-                    # 添加方法签名到报告
-                    report_data = add_method_signatures_to_report(report_data)
-                    
-                    # 添加in_change字段到报告
-                    report_data = add_in_change_field_to_report(project_path, report_data, changed_java_files)
-
-                    # 如果指定了输出文件路径，则保存报告
-                    if output_file:
-                        if FileUtil.save_json_to_file(report_data, output_file):
-                            logger.info(f"PMD报告已保存到: {output_file}")
-                        else:
-                            logger.error(f"保存PMD报告失败: {output_file}")
-                            return None
-                    else:
-                        logger.info("未指定输出文件路径，跳过保存")
-
-                    return report_data
-                except json.JSONDecodeError as e:
-                    logger.error(f"解析PMD输出JSON失败: {e}")
-                    logger.error("原始输出:")
-                    logger.error(result.stdout)
-                    return None
-            else:
-                logger.warn("PMD没有输出任何内容")
-                return None
-        else:
-            logger.error(f"PMD检查失败，返回代码: {result.returncode}")
-            logger.error(f"错误输出: {result.stderr}")
-            logger.error(f"标准输出: {result.stdout}")
-            return None
-
-    except subprocess.CalledProcessError as e:
-        logger.error(f"PMD检查失败，返回代码: {e.returncode}")
-        logger.error(f"错误输出: {e.stderr}")
+        report_data = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        logger.error(f"解析PMD输出JSON失败: {e}")
         return None
-    except Exception as e:
-        logger.error(f"执行PMD检查时发生错误: {str(e)}")
-        return None
+    
+    # 处理报告数据
+    pmd_plugin = PMDCheckPlugin()
+    report_data = pmd_plugin.filter_violations(report_data)
+    report_data = add_method_signatures_to_report(report_data)
+    report_data = add_in_change_field_to_report(project_path, report_data, changed_java_files)
+    
+    return report_data
 
 
-def run_pmd_check_static(project_path: str, project_name: str, workspace_path: str, plugin_path: str = None, files_to_check: List[str] = None, changed_java_files: set = None) -> Optional[str]:
+def _save_report(report_data, output_file):
+    """保存报告到文件"""
+    if FileUtil.save_json_to_file(report_data, output_file):
+        logger.info(f"PMD报告已保存到: {output_file}")
+        return True
+    else:
+        logger.error(f"保存PMD报告失败: {output_file}")
+        return False
+
+
+def run_pmd_check_static(project_path: str, project_name: str, workspace_path: str, plugin_path: str = None,
+                         changed_java_files: set = None) -> Optional[str]:
     """
     运行PMD代码检查的静态方法，供调用链分析服务使用
     
@@ -495,7 +479,7 @@ def run_pmd_check_static(project_path: str, project_name: str, workspace_path: s
         output_file = FileUtil.get_project_file_path(workspace_path, project_name, "plugin_pmd_report_enhanced.json")
         
         # 运行PMD检查
-        report_data = run_pmd_check(project_path, output_file, plugin_path, files_to_check, project_name, changed_java_files)
+        report_data = run_pmd_check(project_path, output_file, plugin_path, project_name, changed_java_files)
         
         if report_data:
             logger.info(f"PMD检查成功完成，报告文件: {output_file}")

@@ -3,6 +3,7 @@ from typing import Dict, List, Optional
 
 from biz.utils.log import logger
 from biz.service.call_chain_analysis.file_util import FileUtil
+from biz.service.call_chain_analysis.pmd_check_plugin import PMDCheckPlugin
 
 
 class PMDReportFormatter:
@@ -36,6 +37,9 @@ class PMDReportFormatter:
                 logger.info("PMD报告中没有文件数据")
                 return None
 
+            # 获取检查级别
+            PMDReportFormatter.filter_by_level(pmd_report_data, webhook_data)
+
             # 生成Markdown表格
             markdown_table = PMDReportFormatter._generate_markdown_table(pmd_report_data['files'], branch_name, webhook_data)
             
@@ -49,6 +53,38 @@ class PMDReportFormatter:
         except Exception as e:
             logger.error(f"格式化PMD报告时发生错误: {str(e)}")
             return None
+
+    @staticmethod
+    def filter_by_level(pmd_report_data, webhook_data):
+        project_name = webhook_data['project']["name"]
+        project_level = PMDCheckPlugin().get_project_level(project_name)
+        change_level = PMDCheckPlugin().get_change_level(project_name)
+        # 使用 project_level 和 change_level 对 pmd_report_data进行一次过滤
+        # 当"in_change": true 时使用 change_level，保留 priority<= change_level
+        # 当"in_change": false 时使用 project_level，保留 priority<= project_level
+        filtered_files = []
+        for file_info in pmd_report_data['files']:
+            filename = file_info.get('filename', '')
+            violations = file_info.get('violations', [])
+
+            # 检查文件是否在变更中
+            in_change = file_info.get('in_change', False)
+            current_level = change_level if in_change else project_level
+
+            # 过滤violations，只保留优先级小于等于当前级别的
+            filtered_violations = []
+            for violation in violations:
+                priority = violation.get('priority', 5)
+                if priority <= current_level:
+                    filtered_violations.append(violation)
+
+            # 如果过滤后还有violations，则保留该文件
+            if filtered_violations:
+                filtered_file_info = file_info.copy()
+                filtered_file_info['violations'] = filtered_violations
+                filtered_files.append(filtered_file_info)
+        # 更新过滤后的数据
+        pmd_report_data['files'] = filtered_files
 
     @staticmethod
     def _generate_markdown_table(files_data: List[Dict], branch_name: str = 'master', webhook_data: dict = None) -> Optional[str]:
