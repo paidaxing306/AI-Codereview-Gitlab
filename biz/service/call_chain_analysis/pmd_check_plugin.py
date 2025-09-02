@@ -32,6 +32,54 @@ class PMDCheckPlugin:
         self.skip_filename_keywords = ['test']
         logger.info(f"文件名关键词过滤列表: {self.skip_filename_keywords}")
     
+    def get_project_level(self, project_name: str) -> int:
+        """
+        根据项目名称获取对应的p3c检查级别
+        
+        参数:
+            project_name: 项目名称
+            
+        返回:
+            级别对应的数字: 1(高级), 2(中级), 3(低级)
+        """
+        # 级别映射
+        level_mapping = {
+            'HIGH': 1,
+            'MIDDLE': 2, 
+            'LOW': 3
+        }
+        
+        # 获取默认级别
+        default_level = os.environ.get('CODE_ANALYSIS_PROJECT_JAVA_P3C_LEVEL_DEFAULT', 'HIGH')
+        default_level_num = level_mapping.get(default_level.upper(), 1)
+        
+        # 获取各级别对应的项目列表
+        high_projects = os.environ.get('CODE_ANALYSIS_PROJECT_JAVA_P3C_LEVEL_HIGH', '').split(',')
+        middle_projects = os.environ.get('CODE_ANALYSIS_PROJECT_JAVA_P3C_LEVEL_MIDDLE', '').split(',')
+        low_projects = os.environ.get('CODE_ANALYSIS_PROJECT_JAVA_P3C_LEVEL_LOW', '').split(',')
+        
+        # 清理项目名称（去除空格和空字符串）
+        high_projects = [p.strip() for p in high_projects if p.strip()]
+        middle_projects = [p.strip() for p in middle_projects if p.strip()]
+        low_projects = [p.strip() for p in low_projects if p.strip()]
+        
+        # 根据项目名称确定级别
+        if project_name in high_projects:
+            level_num = 1
+            level_name = 'HIGH'
+        elif project_name in middle_projects:
+            level_num = 2
+            level_name = 'MIDDLE'
+        elif project_name in low_projects:
+            level_num = 3
+            level_name = 'LOW'
+        else:
+            level_num = default_level_num
+            level_name = default_level.upper()
+        
+        logger.info(f"项目 {project_name} 使用 {level_name} 级别 (数字: {level_num})")
+        return level_num
+
     def filter_violations(self, report_data: Dict) -> Dict:
         """
         根据skip_rule_list过滤violations，并根据文件名关键词过滤文件
@@ -221,7 +269,39 @@ def add_method_signatures_to_report(report_data: Dict) -> Dict:
     return report_data
 
 
-def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_check=None):
+def add_in_change_field_to_report(project_path, report_data: Dict, changed_java_files: set = None) -> Dict:
+    """
+    为PMD报告中的每个文件添加in_change字段，标记该文件是否在变更列表中
+    
+    参数:
+        report_data: PMD报告数据
+        changed_java_files: 变更的Java文件路径集合，用于标记in_change字段
+        
+    返回:
+        添加了in_change字段的报告数据
+    """
+    if 'files' not in report_data:
+        return report_data
+    
+    for file_info in report_data['files']:
+        filename = file_info.get('filename', '')
+        
+        # 添加in_change字段，标记该文件是否在变更列表中
+        if changed_java_files is not None:
+            # 使用os.path.relpath基于project_path计算相对路径
+            relative_path = os.path.relpath(filename, project_path)
+            # 统一使用正斜杠作为路径分隔符
+            relative_path = relative_path.replace(os.sep, '/')
+            # 检查是否在变更文件列表中
+            in_change = relative_path in changed_java_files
+            file_info['in_change'] = in_change
+        else:
+            file_info['in_change'] = False
+    
+    return report_data
+
+
+def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_check=None, project_name=None, changed_java_files=None):
     """
     运行PMD代码检查并生成报告
 
@@ -230,6 +310,8 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
         output_file: 输出文件完整路径，如果为None则不保存文件
         plugin_path: 插件路径，如果为None则使用默认路径
         files_to_check: 要检查的文件列表，如果为None则检查整个项目
+        project_name: 项目名称，用于确定检查级别
+        changed_java_files: 变更的Java文件路径集合，用于标记in_change字段
         
     返回:
         成功时返回报告数据字典，失败时返回None
@@ -254,6 +336,12 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
         logger.error(f"错误：项目路径不存在: {project_path}")
         return None
 
+    # 获取项目对应的检查级别
+    pmd_plugin = PMDCheckPlugin()
+
+    min_level = pmd_plugin.get_project_level(project_name)
+
+
     # 根据操作系统选择执行方式
     if os.name == 'nt':  # Windows系统
         logger.info("检测到Windows系统，使用Java命令")
@@ -274,31 +362,21 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
             "java",
             "-cp", classpath,
             "net.sourceforge.pmd.PMD",
-            "-min","1",
-            "-R","rulesets/java/ali-comment.xml",
-            "-R","rulesets/java/ali-constant.xml",
-            "-R","rulesets/java/ali-exception.xml",
-            "-R","rulesets/java/ali-flowcontrol.xml",
-            "-R","rulesets/java/ali-naming.xml",
-            "-R","rulesets/java/ali-oop.xml",
-            "-R","rulesets/java/ali-orm.xml",
-            "-R","rulesets/java/ali-other.xml",
-            "-R","rulesets/java/ali-set.xml",
-            "-f", "json"
-
+            "-d", project_path,
+            "--minimum-priority", str(min_level),
+            "-R",
+            "rulesets/java/ali-comment.xml",
+            "rulesets/java/ali-constant.xml",
+            "rulesets/java/ali-exception.xml",
+            "rulesets/java/ali-flowcontrol.xml",
+            "rulesets/java/ali-naming.xml",
+            "rulesets/java/ali-oop.xml",
+            "rulesets/java/ali-orm.xml",
+            "rulesets/java/ali-other.xml",
+            "rulesets/java/ali-set.xml",
+            "-f", "json",
         ]
-        
-        # 如果指定了要检查的文件列表，则使用多个 -d 参数指定文件
-        if files_to_check and len(files_to_check) > 0:
-            logger.info(f"将对 {len(files_to_check)} 个指定文件进行PMD检查")
-            # 直接使用绝对路径进行PMD检查
-            for file_path in files_to_check:
-                command.extend(["-d", file_path])
-                logger.info(f"添加PMD检查文件: {file_path}")
-        else:
-            logger.info("将对整个项目进行PMD检查")
-            command.extend(["-d", project_path])
-            
+
     else:  # Linux/Unix/macOS系统
         logger.info("检测到Linux/Unix/macOS系统，使用run.sh脚本")
 
@@ -315,7 +393,8 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
         command = [
             run_sh_path,
             "pmd",
-            "-min","1",
+            "-d", project_path,
+            "--minimum-priority", str(min_level),
             "-R",
             "rulesets/java/ali-comment.xml",
             "rulesets/java/ali-constant.xml",
@@ -326,24 +405,13 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
             "rulesets/java/ali-orm.xml",
             "rulesets/java/ali-other.xml",
             "rulesets/java/ali-set.xml",
-            "-f", "json"
-
+            "-f", "json",
         ]
-        
-        # 如果指定了要检查的文件列表，则使用多个 -d 参数指定文件
-        if files_to_check and len(files_to_check) > 0:
-            logger.info(f"将对 {len(files_to_check)} 个指定文件进行PMD检查")
-            # 直接使用绝对路径进行PMD检查
-            for file_path in files_to_check:
-                command.extend(["-d", file_path])
-                logger.info(f"添加PMD检查文件: {file_path}")
-        else:
-            logger.info("将对整个项目进行PMD检查")
-            command.extend(["-d", project_path])
+
+    logger.info("将对整个项目进行PMD检查")
 
     try:
         logger.info("运行命令:\n" + " ".join(command))
-
         # 执行命令并捕获输出
         result = subprocess.run(
             command,
@@ -369,6 +437,9 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
 
                     # 添加方法签名到报告
                     report_data = add_method_signatures_to_report(report_data)
+                    
+                    # 添加in_change字段到报告
+                    report_data = add_in_change_field_to_report(project_path, report_data, changed_java_files)
 
                     # 如果指定了输出文件路径，则保存报告
                     if output_file:
@@ -404,7 +475,7 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, files_to_che
         return None
 
 
-def run_pmd_check_static(project_path: str, project_name: str, workspace_path: str, plugin_path: str = None, files_to_check: List[str] = None) -> Optional[str]:
+def run_pmd_check_static(project_path: str, project_name: str, workspace_path: str, plugin_path: str = None, files_to_check: List[str] = None, changed_java_files: set = None) -> Optional[str]:
     """
     运行PMD代码检查的静态方法，供调用链分析服务使用
     
@@ -414,6 +485,7 @@ def run_pmd_check_static(project_path: str, project_name: str, workspace_path: s
         workspace_path: 工作空间路径
         plugin_path: 插件路径，如果为None则使用默认路径
         files_to_check: 要检查的文件列表，如果为None则检查整个项目
+        changed_java_files: 变更的Java文件路径集合，用于标记in_change字段
         
     返回:
         成功时返回PMD报告文件路径，失败时返回None
@@ -423,7 +495,7 @@ def run_pmd_check_static(project_path: str, project_name: str, workspace_path: s
         output_file = FileUtil.get_project_file_path(workspace_path, project_name, "plugin_pmd_report_enhanced.json")
         
         # 运行PMD检查
-        report_data = run_pmd_check(project_path, output_file, plugin_path, files_to_check)
+        report_data = run_pmd_check(project_path, output_file, plugin_path, files_to_check, project_name, changed_java_files)
         
         if report_data:
             logger.info(f"PMD检查成功完成，报告文件: {output_file}")

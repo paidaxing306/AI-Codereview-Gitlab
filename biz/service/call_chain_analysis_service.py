@@ -82,11 +82,10 @@ class CallChainAnalysisService:
                 return None
 
             # 3.1 plugin PMD代码检查产生{workspace/project_tmp/plugin_pmd_report_enhanced.json}
-            # 从changes中提取Java文件路径，只对变更的文件进行PMD检查
+            # 从整个Java项目中提取所有Java文件路径，对整个项目进行PMD检查
             java_files_to_check = self._extract_java_files_from_changes(changes, project_info['path'])
-            
             pmd_report_file = run_pmd_check_static(project_info['path'], project_info['name'], self.workspace_path,
-                                                   self.plugin_path, java_files_to_check)
+                                                   self.plugin_path, java_files_to_check, self.changed_java_files)
             if pmd_report_file:
                 logger.info(f"PMD代码检查完成，报告文件: {pmd_report_file}")
                 
@@ -138,7 +137,7 @@ class CallChainAnalysisService:
 
     def _extract_java_files_from_changes(self, changes: list, project_path: str) -> List[str]:
         """
-        从changes中提取Java文件路径
+        从整个Java项目中提取所有Java文件路径，同时记录变更文件信息
         
         Args:
             changes: 代码变更列表
@@ -147,25 +146,43 @@ class CallChainAnalysisService:
         Returns:
             Java文件路径列表
         """
-        java_files = []
-        
+        # 获取所有变更的Java文件路径，用于后续标记in_change字段
+        changed_java_files = set()
         for change in changes:
             if isinstance(change, dict):
                 new_path = change.get('new_path', '')
-                
-                # 只处理Java文件
                 if new_path.endswith('.java'):
+                    changed_java_files.add(new_path)
+        
+        # 递归查找项目中的所有Java文件
+        java_files = []
+        for root, dirs, files in os.walk(project_path):
+            # 跳过一些常见的非源码目录
+            dirs[:] = [d for d in dirs if d not in ['.git', 'target', 'build', 'out', 'bin', 'node_modules']]
+            
+            for file in files:
+                if file.endswith('.java'):
+                    # 构建相对于项目根目录的路径
+                    rel_path = os.path.relpath(os.path.join(root, file), project_path)
+                    # 转换为Unix风格的路径分隔符
+                    rel_path = rel_path.replace(os.sep, '/')
+                    
                     # 构建完整的文件路径
-                    full_path = os.path.join(project_path, new_path)
+                    full_path = os.path.join(project_path, rel_path)
                     
                     # 检查文件是否存在
                     if os.path.exists(full_path):
                         java_files.append(full_path)
-                        logger.info(f"添加Java文件到PMD检查列表: {full_path}")
-                    else:
-                        logger.warn(f"Java文件不存在，跳过PMD检查: {full_path}")
+                        if rel_path in changed_java_files:
+                            logger.info(f"添加变更的Java文件到PMD检查列表: {rel_path}")
+                        else:
+                            logger.debug(f"添加项目Java文件到PMD检查列表: {rel_path}")
         
-        logger.info(f"从changes中提取到 {len(java_files)} 个Java文件进行PMD检查")
+        logger.info(f"从整个项目中提取到 {len(java_files)} 个Java文件进行PMD检查，其中 {len(changed_java_files)} 个为变更文件")
+        
+        # 将变更文件信息保存到实例变量中，供后续使用
+        self.changed_java_files = changed_java_files
+        
         return java_files
 
     def _clone_or_update_project(self, webhook_data: dict, github_token: str) -> Optional[Dict]:

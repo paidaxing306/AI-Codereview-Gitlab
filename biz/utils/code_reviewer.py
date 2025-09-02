@@ -128,6 +128,7 @@ class CodeReviewer(BaseReviewer):
             prompt_text = truncate_text_by_tokens(prompt_text, review_max_tokens)
 
         review_result = self.review_call_chain_code(prompt_text, file_path).strip()
+
         if review_result.startswith("```markdown") and review_result.endswith("```"):
             return review_result[11:-3].strip()
         return review_result

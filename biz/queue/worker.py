@@ -122,7 +122,7 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
 
 
         # 启用调用链分析变更代码对其他方法的影响
-        if os.environ.get('CODE_CHANGE_ANALYSIS_ENABLED', '0') == '1':
+        if os.environ.get('CODE_ANALYSIS_ENABLED', '0') == '1':
             _process_change_analysis(webhook_data, gitlab_token, changes, handler)
 
         
@@ -363,8 +363,95 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
         # 执行调用链代码审查
         review_result = CodeReviewer().review_and_analyze_call_chain_code(prompt, "java")
 
-        # 将review结果提交到Gitlab的 notes
-        handler.add_merge_request_notes(
-            f'变更内容 {change_index}: \n{review_result}')
+        # 根据项目配置过滤问题级别
+        filtered_review_result = _filter_review_result_by_project_level(
+            webhook_data['project']['name'], 
+            review_result
+        )
+
+        if len(filtered_review_result.split('\n')) > 2:
+            # 将review结果提交到Gitlab的 notes
+            handler.add_merge_request_notes(
+                f'变更内容 {change_index}: \n{filtered_review_result}')
 
         logger.info(f"Change {change_index} 的调用链分析完成")
+
+
+def _filter_review_result_by_project_level(project_name: str, review_result: str) -> str:
+    """
+    根据项目配置过滤问题级别
+    
+    Args:
+        project_name: 项目名称
+        review_result: 原始审查结果
+        
+    Returns:
+        过滤后的审查结果
+    """
+    # 获取环境变量配置
+    default_level = os.environ.get('CODE_ANALYSIS_CHANGE_AI_LEVEL_DEFAULT', 'LOW')
+    high_projects = os.environ.get('CODE_ANALYSIS_CHANGE_AI_LEVEL_HIGH', '').split(',')
+    middle_projects = os.environ.get('CODE_ANALYSIS_CHANGE_AI_LEVEL_MIDDLE', '').split(',')
+    low_projects = os.environ.get('CODE_ANALYSIS_CHANGE_AI_LEVEL_LOW', '').split(',')
+    
+    # 确定项目级别
+    project_level = default_level
+    if project_name in high_projects:
+        project_level = 'HIGH'
+    elif project_name in middle_projects:
+        project_level = 'MIDDLE'
+    elif project_name in low_projects:
+        project_level = 'LOW'
+
+    logger.info(f"项目 {project_name} 使用级别: {project_level}")
+    
+    # 根据级别过滤结果
+    if project_level == 'HIGH':
+        # 显示高
+        return _filter_middle_low_level_issues(review_result)
+    elif project_level == 'MIDDLE':
+        # 显示中高
+        return _filter_low_level_issues(review_result)
+    elif project_level == 'LOW':
+                 # 全显示
+         return review_result
+
+
+def _filter_middle_low_level_issues(review_result: str) -> str:
+    """
+    过滤掉中低级别问题，只显示高级别问题
+    
+    Args:
+        review_result: 原始审查结果
+        
+    Returns:
+        过滤后的结果
+    """
+    lines = review_result.split('\n')
+    filtered_lines = []
+    
+    for line in lines:
+        if '🟢 低' not in line and '🟡 中' not in line:
+            filtered_lines.append(line)
+
+    return '\n'.join(filtered_lines)
+
+
+def _filter_low_level_issues(review_result: str) -> str:
+    """
+    过滤掉低级别问题，保留中高级别问题
+    
+    Args:
+        review_result: 原始审查结果
+        
+    Returns:
+        过滤后的结果
+    """
+    lines = review_result.split('\n')
+    filtered_lines = []
+    
+    for line in lines:
+        if '🟢 低' not in line:
+            filtered_lines.append(line)
+    
+    return '\n'.join(filtered_lines)

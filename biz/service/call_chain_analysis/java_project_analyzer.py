@@ -126,15 +126,15 @@ class JavaProjectAnalyzer:
         self._empty_lines_pattern = re.compile(r'\n\s*\n\s*\n+')
         
         # 从环境变量读取包路径过滤关键词配置
-        package_filter_keywords_str = os.environ.get('CODE_CALL_PACKAGE_FILE_FILTER_KEYWORDS', '.util.,.test.,.dto.,.model.,.vo.,.test,.domain.,.entity.,.enums.')
+        package_filter_keywords_str = os.environ.get('CODE_ANALYSIS_FILE_FILTER_KEYWORDS', '.util.,.test.,.dto.,.model.,.vo.,.test,.domain.,.entity.,.enums.')
         self.PACKAGE_FILTER_KEYWORDS = [kw.strip() for kw in package_filter_keywords_str.split(',') if kw.strip()]
 
         # 从环境变量读取类过滤关键词配置
-        class_filter_keywords_str = os.environ.get('CODE_CALL_CHAIN_JAVA_CLASS_FILTER_KEYWORDS', '.util.,.test.,.dto.,.model.,.vo.,.test,.domain.,.entity.,.enums.')
+        class_filter_keywords_str = os.environ.get('CODE_ANALYSIS_JAVA_CLASS_FILTER_KEYWORDS', '.util.,.test.,.dto.,.model.,.vo.,.test,.domain.,.entity.,.enums.')
         self.CLASS_FILTER_KEYWORDS = [kw.strip() for kw in class_filter_keywords_str.split(',') if kw.strip()]
 
         # 从环境变量读取过滤关键词配置
-        method_filter_keywords_str = os.environ.get('CODE_CALL_CHAIN_JAVA_METHOD_FILTER_KEYWORDS', '.getcode(),getbyid')
+        method_filter_keywords_str = os.environ.get('CODE_ANALYSIS_JAVA_METHOD_FILTER_KEYWORDS', '.getcode(),getbyid')
         self.METHOD_FILTER_KEYWORDS = [kw.strip() for kw in method_filter_keywords_str.split(',') if kw.strip()]
 
     
