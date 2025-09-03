@@ -20,3 +20,5 @@ zhipuai==2.1.5.20230904
 rq==2.1.0
 javalang==0.13.0
 python-dotenv==1.0.0
+tree-sitter
+tree-sitter-java

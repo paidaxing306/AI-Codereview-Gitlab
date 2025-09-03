@@ -1,7 +1,8 @@
 import os
 import re
 import time
-from urllib.parse import urljoin
+import base64
+from urllib.parse import urljoin, quote
 import fnmatch
 import requests
 
@@ -47,6 +48,117 @@ def slugify_url(original_url: str) -> str:
     target = target.rstrip('_')
 
     return target
+
+
+# 用户信息缓存，key为token，value为用户信息
+_user_cache = {}
+
+
+def get_user_info(gitlab_token: str, gitlab_url: str) -> dict:
+    """
+    获取GitLab用户信息，支持缓存功能
+    缓存key为PRIVATE-TOKEN的值
+    """
+    if not gitlab_token or not gitlab_url:
+        logger.warn("GitLab token or URL is empty")
+        return {}
+    
+    # 检查缓存
+    if gitlab_token in _user_cache:
+        logger.debug(f"User info found in cache for token: {gitlab_token[:10]}...")
+        return _user_cache[gitlab_token]
+    
+    # 调用GitLab API获取用户信息
+    url = urljoin(f"{gitlab_url}/", "api/v4/user")
+    headers = {
+        'Private-Token': gitlab_token
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, verify=False)
+        logger.debug(f"Get user info response from GitLab: {response.status_code}, URL: {url}")
+        
+        if response.status_code == 200:
+            user_info = response.json()
+            # 缓存用户信息
+            _user_cache[gitlab_token] = user_info
+            logger.info(f"User info cached for user: {user_info.get('username', 'unknown')}")
+            return user_info
+        else:
+            logger.warn(f"Failed to get user info: {response.status_code}, {response.text}")
+            return {}
+    except Exception as e:
+        logger.error(f"Error getting user info: {str(e)}")
+        return {}
+
+
+def get_user_id(gitlab_token: str, gitlab_url: str) -> int:
+    """
+    获取GitLab用户ID，支持缓存功能
+    """
+    user_info = get_user_info(gitlab_token, gitlab_url)
+    return user_info.get('id', 0)
+
+def get_file_content(gitlab_token: str, gitlab_url: str, project_id: int, file_path: str, branch_name: str) -> str:
+    """
+    获取GitLab文件内容
+    
+    Args:
+        gitlab_token: GitLab私有令牌
+        gitlab_url: GitLab服务器URL
+        project_id: 项目ID
+        file_path: 文件路径（会自动进行URL编码）
+        branch_name: 分支名称（会自动进行URL编码）
+    
+    Returns:
+        str: 文件内容，如果获取失败返回空字符串
+    
+    API示例:
+    GET /api/v4/projects/{project_id}/repository/files/{file_path}?ref={branch_name}
+    响应包含base64编码的文件内容，需要解码后返回
+    """
+    if not all([gitlab_token, gitlab_url, project_id, file_path, branch_name]):
+        logger.warn("Missing required parameters for get_file_content")
+        return ""
+    
+    # URL编码文件路径和分支名
+    encoded_file_path = quote(file_path, safe='')
+    encoded_branch_name = quote(branch_name, safe='')
+    
+    url = urljoin(f"{gitlab_url}/", 
+                  f"api/v4/projects/{project_id}/repository/files/{encoded_file_path}?ref={encoded_branch_name}")
+    headers = {
+        'Private-Token': gitlab_token
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, verify=False)
+        logger.debug(f"Get file content response from GitLab: {response.status_code}, URL: {url}")
+        
+        if response.status_code == 200:
+            file_data = response.json()
+            content = file_data.get('content', '')
+            encoding = file_data.get('encoding', '')
+            
+            # 如果是base64编码，需要解码
+            if encoding == 'base64' and content:
+                try:
+                    decoded_content = base64.b64decode(content).decode('utf-8')
+                    logger.info(f"Successfully retrieved and decoded file: {file_path}")
+                    return decoded_content
+                except Exception as decode_error:
+                    logger.error(f"Failed to decode file content: {str(decode_error)}")
+                    return ""
+            else:
+                logger.info(f"Successfully retrieved file (no decoding needed): {file_path}")
+                return content
+        else:
+            logger.warn(f"Failed to get file content: {response.status_code}, {response.text}")
+            return ""
+    except Exception as e:
+        logger.error(f"Error getting file content: {str(e)}")
+        return ""
+
 
 
 class MergeRequestHandler:
@@ -164,6 +276,96 @@ class MergeRequestHandler:
         else:
             logger.warn(f"Failed to get protected branches: {response.status_code}, {response.text}")
             return False
+
+    def get_current_user_id(self) -> int:
+        """获取当前GitLab用户ID"""
+        return get_user_id(self.gitlab_token, self.gitlab_url)
+
+    def get_current_user_info(self) -> dict:
+        """获取当前GitLab用户信息"""
+        return get_user_info(self.gitlab_token, self.gitlab_url)
+
+    def get_merge_request_notes(self) -> list:
+        """获取 Merge Request 的评论列表"""
+        if self.event_type != 'merge_request':
+            logger.warn(f"Invalid event type: {self.event_type}. Only 'merge_request' event is supported now.")
+            return []
+
+        url = urljoin(f"{self.gitlab_url}/",
+                      f"api/v4/projects/{self.project_id}/merge_requests/{self.merge_request_iid}/notes?page=1&per_page=100")
+        headers = {
+            'Private-Token': self.gitlab_token
+        }
+        
+        response = requests.get(url, headers=headers, verify=False)
+        logger.debug(f"Get notes response from GitLab: {response.status_code}, URL: {url}")
+        
+        if response.status_code == 200:
+            notes = response.json()
+            logger.info(f"Successfully retrieved {len(notes)} notes from merge request.")
+            return notes
+        else:
+            logger.warn(f"Failed to get notes from GitLab: {response.status_code}, {response.text}")
+            return []
+
+    def delete_current_user_notes(self) -> int:
+        """删除当前用户的非系统评论"""
+        if self.event_type != 'merge_request':
+            logger.warn(f"Invalid event type: {self.event_type}. Only 'merge_request' event is supported now.")
+            return 0
+
+        # 获取当前用户ID
+        current_user_id = self.get_current_user_id()
+        if not current_user_id:
+            logger.warn("Failed to get current user ID")
+            return 0
+
+        # 获取所有评论
+        notes = self.get_merge_request_notes()
+        if not notes:
+            logger.info("No notes found to delete")
+            return 0
+
+        # 过滤出需要删除的评论（system=false 且 author.id=当前用户ID）
+        notes_to_delete = [
+            note for note in notes
+            if not  note.get('system',True) and note.get('author', {}).get('id') == current_user_id
+        ]
+
+        if not notes_to_delete:
+            logger.info("No notes found matching deletion criteria")
+            return 0
+
+        deleted_count = 0
+        for note in notes_to_delete:
+            note_id = note.get('id')
+            if self._delete_single_note(note_id):
+                deleted_count += 1
+
+        logger.info(f"Successfully deleted {deleted_count} out of {len(notes_to_delete)} notes")
+        return deleted_count
+
+    def _delete_single_note(self, note_id: int) -> bool:
+        """删除单个评论"""
+        url = urljoin(f"{self.gitlab_url}/",
+                      f"api/v4/projects/{self.project_id}/merge_requests/{self.merge_request_iid}/notes/{note_id}")
+        headers = {
+            'Private-Token': self.gitlab_token
+        }
+
+        response = requests.delete(url, headers=headers, verify=False)
+        logger.debug(f"Delete note {note_id} response from GitLab: {response.status_code}, URL: {url}")
+
+        if response.status_code == 204:
+            logger.info(f"Successfully deleted note {note_id}")
+            return True
+        else:
+            logger.warn(f"Failed to delete note {note_id}: {response.status_code}, {response.text}")
+            return False
+
+    def get_file_content(self, file_path: str, branch_name: str) -> str:
+        """获取文件内容"""
+        return get_file_content(self.gitlab_token, self.gitlab_url, self.project_id, file_path, branch_name)
 
 
 class PushHandler:
@@ -309,3 +511,15 @@ class PushHandler:
             return self.repository_compare(before, after)
         else:
             return []
+
+    def get_current_user_id(self) -> int:
+        """获取当前GitLab用户ID"""
+        return get_user_id(self.gitlab_token, self.gitlab_url)
+
+    def get_current_user_info(self) -> dict:
+        """获取当前GitLab用户信息"""
+        return get_user_info(self.gitlab_token, self.gitlab_url)
+
+    def get_file_content(self, file_path: str, branch_name: str) -> str:
+        """获取文件内容"""
+        return get_file_content(self.gitlab_token, self.gitlab_url, self.project_id, file_path, branch_name)

@@ -125,8 +125,6 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
         if os.environ.get('CODE_ANALYSIS_ENABLED', '0') == '1':
             _process_change_analysis(webhook_data, gitlab_token, changes, handler)
 
-        
-
         # 统计本次新增、删除的代码总数
         additions = 0
         deletions = 0
@@ -342,6 +340,9 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
         gitlab_url_slug: GitLab URL标识
         last_commit_id: 最后提交ID
     """
+    # 删除历史评论
+    handler.delete_current_user_notes()
+
     # 获取调用链分析结果
     changes_prompt_json = CallChainAnalysisService.process(webhook_data, gitlab_token, changes, handler)
     
@@ -353,7 +354,8 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
     # 遍历changes_prompt_json的value，循环执行代码审查
     logger.info(f"开始处理调用链分析，包含 {len(changes_prompt_json)} 个变更的提示词")
 
-    for change_index, prompt in changes_prompt_json.items():
+    for change_index, content in changes_prompt_json.items():
+        prompt=content['prompt']
         if not prompt or not prompt.strip():  # 确保提示词不为空
             logger.info(f"Change {change_index} 的提示词为空，跳过处理")
             continue
@@ -361,7 +363,7 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
         logger.info(f"开始处理Change {change_index} 的调用链分析")
 
         # 执行调用链代码审查
-        review_result = CodeReviewer().review_and_analyze_call_chain_code(prompt, "java")
+        review_result = CodeReviewer().review_and_analyze_call_chain_code(prompt, content['language'])
 
         # 根据项目配置过滤问题级别
         filtered_review_result = _filter_review_result_by_project_level(
@@ -375,6 +377,9 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
                 f'变更内容 {change_index}: \n{filtered_review_result}')
 
         logger.info(f"Change {change_index} 的调用链分析完成")
+
+
+
 
 
 def _filter_review_result_by_project_level(project_name: str, review_result: str) -> str:

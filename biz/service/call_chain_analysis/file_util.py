@@ -190,4 +190,26 @@ class FileUtil:
             完整的文件路径
         """
         project_tmp_dir = FileUtil.get_project_tmp_dir(workspace_path, project_name)
-        return os.path.join(project_tmp_dir, filename) 
+        return os.path.join(project_tmp_dir, filename)
+
+    @staticmethod
+    def delete_file(file_path: str) -> bool:
+        """
+        删除文件
+
+        Args:
+            file_path: 文件路径
+
+        Returns:
+            删除成功返回True，失败返回False
+        """
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"文件已删除: {file_path}")
+            else:
+                logger.warn(f"文件不存在，无需删除: {file_path}")
+            return True
+        except Exception as e:
+            logger.error(f"删除文件时发生错误: {str(e)}")
+            return False 

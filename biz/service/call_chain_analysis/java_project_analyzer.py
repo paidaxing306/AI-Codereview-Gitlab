@@ -5,6 +5,9 @@ import time
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Tuple, Optional
 
+import tree_sitter_java
+from tree_sitter import Language, Parser
+
 
 
 from biz.service.call_chain_analysis.file_util import FileUtil
@@ -30,6 +33,7 @@ class MethodSignature:
     method_source_code: str
     usaged_fields: List[str]
     usage_method_signature_name: List[str]
+    class_type: str
 
 
 
@@ -60,6 +64,10 @@ class JavaProjectAnalyzer:
         # 类方法索引，用于快速查找类中的方法
         # 格式: {class_signature_name: [method_signature_name]}
         self.class_method_index: Dict[str, List[str]] = {}
+        
+        # 接口实现类索引，用于快速查找接口的实现类
+        # 格式: {interface_class_signature_name: [ClassSignature]}
+        self.interface_implementation_index: Dict[str, List[ClassSignature]] = {}
 
         self._method_signatures_keys = set()
         self._method_signatures_map = {}  # key: 移除括号的方法名, value: 完整方法签名
@@ -77,9 +85,17 @@ class JavaProjectAnalyzer:
             'push', 'pop', 'peek', 'empty', 'search', 'capacity', 'trimToSize', 'ensureCapacity'
         }
         
+        # 初始化 tree-sitter Java 解析器
+        self.java_language = Language(tree_sitter_java.language())
+        self.parser =Parser(self.java_language)
+
+        
         # 预编译正则表达式以提高性能
+        # 修复方法匹配正则，确保匹配的是真正的方法定义而不是方法调用
+        # 要求方法定义前面必须有换行符或者是文件开头，避免匹配到方法内部的语句
+        # 支持泛型方法声明，如 public <T> List<T> methodName(...)
         self._method_pattern = re.compile(
-            r'(?:@\w+(?:\s*\([^)]*\))?\s*\n\s*)*(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?[\w<>\[\]]+\s+\w+\s*\([^)]*\)\s*[{;]',
+            r'(?:^|(?<=\n))\s*(?:@\w+(?:\s*\([^)]*\))?\s*\n\s*)*(?:public|private|protected|static|final|abstract|synchronized|native|strictfp)\s+(?:static\s+|final\s+|abstract\s+|synchronized\s+|native\s+|strictfp\s+)*(?:<[^>]*>\s+)?[\w<>,\s\[\]]+\s+\w+\s*\([^)]*\)\s*(?:throws\s+[\w\s,]+\s*)?[{;]',
             re.MULTILINE
         )
         self._annotation_pattern = re.compile(r'@\w+(?:\s*\([^)]*\))?')
@@ -136,9 +152,6 @@ class JavaProjectAnalyzer:
         class_filter_keywords_str = os.environ.get('CODE_ANALYSIS_JAVA_CLASS_FILTER_KEYWORDS', '.util.,.test.,.dto.,.model.,.vo.,.test,.domain.,.entity.,.enums.')
         self.CLASS_FILTER_KEYWORDS = [kw.strip() for kw in class_filter_keywords_str.split(',') if kw.strip()]
 
-        # 从环境变量读取过滤关键词配置
-        method_filter_keywords_str = os.environ.get('CODE_ANALYSIS_JAVA_METHOD_FILTER_KEYWORDS', '.getcodeUser()')
-        self.METHOD_FILTER_KEYWORDS = [kw.strip() for kw in method_filter_keywords_str.split(',') if kw.strip()]
 
     
     def analyze_project(self, project_path: str) -> Tuple[Dict[str, ClassSignature], 
@@ -185,6 +198,13 @@ class JavaProjectAnalyzer:
               # 为 self.method_signatures 建立 key 的 map 索引，提高查找效率
         # key: 移除括号的方法名, value: 完整方法签名
         self._build_simple_method_sig_map()
+
+        # 建立接口实现类索引
+        self._build_interface_implementation_index()
+
+  
+
+
 
         # 分析所有方法之间的调用关系
         start_time = time.time()
@@ -500,16 +520,6 @@ class JavaProjectAnalyzer:
             # 直接使用类签名名称
             method_signature_name = f"{class_signature_name}.{method_signature}"
 
-            # 过滤检查：方法名过滤
-            should_filter = False
-            for filter_keyword in self.METHOD_FILTER_KEYWORDS:
-                if filter_keyword in method_signature_name.lower():
-                    # logger.debug(f"过滤方法: {method_signature_name} (包含关键词: {filter_keyword})")
-                    should_filter = True
-                    break
-
-            if should_filter:
-                continue
 
             method_names.append(method_signature_name)
 
@@ -519,9 +529,10 @@ class JavaProjectAnalyzer:
             # 创建MethodSignature，稍后更新调用的方法信息
             self.method_signatures[method_signature_name] = MethodSignature(
                 class_signature_name=class_signature_name,
-                method_source_code=self.format_java_code(method.strip()),
+                method_source_code=method,
                 usaged_fields=used_fields,
-                usage_method_signature_name=[]  # 稍后更新
+                usage_method_signature_name=[],
+                class_type= 'class'
             )
 
         return method_names
@@ -538,17 +549,6 @@ class JavaProjectAnalyzer:
             # 直接使用类签名名称
             method_signature_name = f"{class_signature_name}.{method_signature}"
 
-            # 过滤检查：方法名过滤
-            should_filter = False
-            for filter_keyword in self.METHOD_FILTER_KEYWORDS:
-                if filter_keyword in method_signature_name.lower():
-                    # logger.debug(f"过滤方法: {method_signature_name} (包含关键词: {filter_keyword})")
-                    should_filter = True
-                    break
-
-            if should_filter:
-                continue
-
             method_names.append(method_signature_name)
 
             # 分析方法中使用的字段
@@ -559,7 +559,8 @@ class JavaProjectAnalyzer:
                 class_signature_name=class_signature_name,
                 method_source_code=self.format_java_code(method.strip()),
                 usaged_fields=used_fields,
-                usage_method_signature_name=[]  # 稍后更新
+                usage_method_signature_name=[],
+                class_type = 'interface'
             )
 
         return method_names
@@ -638,31 +639,31 @@ class JavaProjectAnalyzer:
         
         Returns:
             简单的方法签名名称map，例如：
-                {"com.qnvip.qwen.dal.dao.impl.ChatHistoryCommentDaoServiceImpl.page(IPage<ChatHistoryCommentDO>, ChatHistoryCommentQueryDTO)": "page"}
+                {"com.qnvip.qwen.dal.dao.impl.ChatHistoryCommentDaoServiceImpl.page(IPage<ChatHistoryCommentDO>, ChatHistoryCommentQueryDTO)": "page("}
         """
         simple_method_signature_name_map = {}
         
         for method_name in method_names:
-            # 提取方法名部分（不包含参数列表和括号）
+            # 提取方法名部分（包含左括号，方便区分方法）
             # 例如：com.qnvip.qwen.dal.dao.impl.ChatHistoryCommentDaoServiceImpl.page(IPage<ChatHistoryCommentDO>, ChatHistoryCommentQueryDTO)
-            # 需要提取：page
+            # 需要提取：page(
             
             # 找到最后一个点号的位置，获取方法名和参数部分
             last_dot_index = method_name.rfind('.')
             if last_dot_index != -1:
                 method_with_params = method_name[last_dot_index + 1:]
-                # 找到括号的位置，只取方法名部分
+                # 找到括号的位置，取方法名加左括号
                 paren_index = method_with_params.find('(')
                 if paren_index != -1:
-                    simple_method_name = method_with_params[:paren_index]
+                    simple_method_name = method_with_params[:paren_index + 1]
                 else:
                     simple_method_name = method_with_params
                 simple_method_signature_name_map[method_name] = simple_method_name
             else:
-                # 如果没有找到点号，直接使用方法名（去掉括号）
+                # 如果没有找到点号，直接使用方法名（保留左括号）
                 paren_index = method_name.find('(')
                 if paren_index != -1:
-                    simple_method_name = method_name[:paren_index]
+                    simple_method_name = method_name[:paren_index + 1]
                 else:
                     simple_method_name = method_name
                 simple_method_signature_name_map[method_name] = simple_method_name
@@ -875,23 +876,98 @@ class JavaProjectAnalyzer:
                 return True
         return False
 
+    def _get_text(self, node, source: bytes) -> str:
+        """从 tree-sitter 节点获取文本"""
+        return source[node.start_byte:node.end_byte].decode("utf8")
+    
+    def _extract_methods_tree_sitter(self, node, source: bytes, results: List[str]):
+        """使用 tree-sitter 递归提取方法"""
+        if node.type == 'method_declaration':
+            # 获取完整的方法源码
+            method_code = self._get_text(node, source)
+            results.append(method_code)
+
+        for child in node.children:
+            self._extract_methods_tree_sitter(child, source, results)
+
     def _extract_methods(self, class_content: str) -> List[str]:
-        """提取类中的方法定义"""
-        methods = []
-        
-        # 使用预编译的正则表达式匹配所有方法定义（包括带注解和不带注解的）
-        method_matches = self._method_pattern.finditer(class_content)
-        
-        for match in method_matches:
-            method_start = match.start()
-            method_content = self._extract_method_content_optimized(class_content, method_start)
-            if method_content:
-                methods.append(method_content)
-        
-        return methods
+        """使用 tree-sitter 提取类中的方法定义"""
+        try:
+            # 将字符串转换为字节
+            java_code = class_content.encode("utf8")
+
+            # 解析代码
+            tree = self.parser.parse(java_code)
+            root = tree.root_node
+
+            # 检查解析是否成功
+            if root.has_error:
+                raise Exception("Parsing failed - syntax errors in code")
+
+            # 提取方法
+            methods = []
+            self._extract_methods_tree_sitter(root, java_code, methods)
+
+            # 如果没有找到方法，可能是解析有问题，回退到正则表达式
+            if not methods:
+                logger.warning("tree-sitter 没有找到方法，回退到正则表达式方法")
+                raise Exception("No methods found")
+
+            return methods
+            
+        except Exception as e:
+            logger.warning(f"tree-sitter 解析失败，回退到正则表达式方法: {e}, code = {class_content}")
+            return []
 
     def _extract_methods_for_interface(self, class_content: str) -> List[str]:
-        """提取接口中的方法定义，截取interface后第一个{作为开始，最后一个}作为结束，不包括{}，然后使用;分隔"""
+        """使用tree-sitter提取接口中的方法定义"""
+        try:
+            # 将字符串转换为字节
+            java_code = class_content.encode("utf8")
+            
+            # 解析代码
+            tree = self.parser.parse(java_code)
+            root = tree.root_node
+            
+            # 检查解析是否成功
+            if root.has_error:
+                logger.warning("tree-sitter解析接口代码失败，回退到原方法")
+                return self._extract_methods_for_interface_fallback(class_content)
+            
+            # 提取方法
+            methods = []
+            self._extract_interface_methods_tree_sitter(root, java_code, methods)
+            
+            # 如果没有找到方法，可能是解析有问题，回退到原方法
+            if not methods:
+                logger.warning("tree-sitter没有找到接口方法，回退到原方法")
+                return self._extract_methods_for_interface_fallback(class_content)
+            
+            return methods
+            
+        except Exception as e:
+            logger.warning(f"tree-sitter解析接口失败，回退到原方法: {e}")
+            return self._extract_methods_for_interface_fallback(class_content)
+    
+    def _extract_interface_methods_tree_sitter(self, node, source: bytes, results: List[str]):
+        """使用tree-sitter递归提取接口方法"""
+        if node.type == 'method_declaration':
+            # 获取方法名
+            name_node = node.child_by_field_name('name')
+            # 获取参数列表
+            params_node = node.child_by_field_name('parameters')
+            # 获取完整方法源码
+            method_code = self._get_text(node, source)
+            
+            if name_node and params_node:
+                results.append(method_code)
+        
+        # 递归处理子节点
+        for child in node.children:
+            self._extract_interface_methods_tree_sitter(child, source, results)
+    
+    def _extract_methods_for_interface_fallback(self, class_content: str) -> List[str]:
+        """提取接口中的方法定义的回退方法（原实现）"""
         # 寻找第一个 { 作为开始
         try:
             start_brace_index = class_content.index('{')
@@ -1232,9 +1308,26 @@ class JavaProjectAnalyzer:
                 
                 # 在method_code中查找字段方法调用
                 if field_method_call in method_code:
-                    method_calls.append(f"{field_class_signature_name}.{simple_method_name}")
+                    if class_sig.class_type == 'interface':
+                        # 如果是接口，查找其实现类并添加实现方法
+                        implementations = self.interface_implementation_index.get(field_class_signature_name, [])
+                        found_in_implementation = False
+                        if implementations:
+                            for impl_class_sig in implementations:
+                                # 查找实现类中对应的方法
+                                for impl_method_sig, impl_simple_name in impl_class_sig.simple_method_signature_name_map.items():
+                                    if impl_simple_name == simple_method_name:
+                                        method_calls.append(impl_method_sig)
+                                        found_in_implementation = True
+                        
+                        # 如果在所有实现类中都没有找到对应的方法，则把接口方法本身加进去
+                        if not found_in_implementation:
+                            method_calls.append(method_signature_name)
+                    else:
+                        # 如果是类，直接添加方法签名
+                        method_calls.append(method_signature_name)
         
-        return method_calls
+        return list(set(method_calls))
     
     def _extract_method_name_from_code(self, method_code: str) -> str:
         """从方法代码中提取方法名"""
@@ -1398,6 +1491,36 @@ class JavaProjectAnalyzer:
             # 将类中的所有方法签名添加到索引中
             for method_signature_name in class_sig.method_signature_name:
                 self.class_method_index[class_signature_name].append(method_signature_name)
+
+    def _build_interface_implementation_index(self):
+        """构建接口实现类索引，用于快速查找接口的实现类"""
+        start_time = time.time()
+        self.interface_implementation_index.clear()
+
+        # 1. 将类和接口分组，以优化查找效率
+        # 筛选出所有的接口名称，放入一个集合中以便快速查找
+        interfaces = {
+            name for name, sig in self.class_signatures.items() if sig.class_type == 'interface'
+        }
+        # 筛选出所有的类实例
+        classes = [
+            sig for sig in self.class_signatures.values() if sig.class_type == 'class'
+        ]
+
+        # 2. 遍历所有 class 类型的类，构建实现索引
+        for class_sig in classes:
+            # 只处理实现了接口的类
+            if class_sig.implements:
+                # 遍历该类实现的所有接口
+                for interface_name in class_sig.implements:
+                    # 检查接口是否存在于接口集合中
+                    if interface_name in interfaces:
+                        # 使用 setdefault 来简化代码：如果 key 不存在，则设置默认值并返回；否则返回已存在的值
+                        self.interface_implementation_index.setdefault(interface_name, []).append(class_sig)
+        
+        duration = time.time() - start_time
+        if duration > 0.1:
+            logger.info(f"构建接口实现类索引完成，耗时: {duration:.3f}秒")
 
 
 def analyze_java_project(project_path: str) -> Tuple[Dict[str, ClassSignature], 

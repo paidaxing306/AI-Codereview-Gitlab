@@ -106,13 +106,13 @@ class CodeReviewer(BaseReviewer):
         ]
         return self.call_llm(messages)
 
-    def review_and_analyze_call_chain_code(self, prompt_text: str, file_path: str = "") -> str:
+    def review_and_analyze_call_chain_code(self, prompt_text: str, language: str = "") -> str:
         """
         调用链分析代码审查
         Review判断prompt_text超出取前REVIEW_MAX_TOKENS个token，超出则截断prompt_text，
         调用review_call_chain_code方法，返回review_result，如果review_result是markdown格式，则去掉头尾的```
         :param prompt_text: 调用链分析的提示词文本
-        :param file_path: 文件路径，用于确定文件类型
+        :param language: 文件路径，用于确定文件类型
         :return: 审查结果
         """
         # 如果超长，取前REVIEW_MAX_TOKENS个token
@@ -127,7 +127,7 @@ class CodeReviewer(BaseReviewer):
         if tokens_count > review_max_tokens:
             prompt_text = truncate_text_by_tokens(prompt_text, review_max_tokens)
 
-        review_result = self.review_call_chain_code(prompt_text, file_path).strip()
+        review_result = self.review_call_chain_code(prompt_text, language).strip()
 
         if review_result.startswith("```markdown") and review_result.endswith("```"):
             return review_result[11:-3].strip()
@@ -167,26 +167,22 @@ class CodeReviewer(BaseReviewer):
         # 默认使用java类型
         return "java"
 
-    def _load_call_chain_prompts(self, file_path: str = "") -> Dict[str, Any]:
+    def _load_call_chain_prompts(self, language: str = "") -> Dict[str, Any]:
         """加载调用链分析的提示词配置"""
         prompt_templates_file = "conf/prompt_templates.yml"
         try:
             with open(prompt_templates_file, "r", encoding="utf-8") as file:
                 prompts = yaml.safe_load(file).get("call_chain_analysis", {})
-                
-                # 根据文件类型选择对应的system_prompt
-                file_type = self._get_file_type(file_path)
-                system_prompt_key = file_type
-                
-                if system_prompt_key not in prompts["system_prompt"]:
-                    logger.warning(f"未找到文件类型 {file_type} 的system_prompt配置，使用默认java配置")
-                    system_prompt_key = "java"
+
+                if language not in prompts["system_prompt"]:
+                    logger.warning(f"未找到文件类型 {language} 的system_prompt配置，使用默认java配置")
+                    language = "java"
 
                 # 使用Jinja2渲染模板
                 def render_template(template_str: str) -> str:
                     return Template(template_str).render(style="professional")
 
-                system_prompt = render_template(prompts["system_prompt"][system_prompt_key])
+                system_prompt = render_template(prompts["system_prompt"][language])
                 user_prompt = render_template(prompts["user_prompt"])
 
                 return {

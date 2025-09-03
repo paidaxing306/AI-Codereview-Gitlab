@@ -6,6 +6,10 @@ from typing import Dict, Optional
 from jinja2 import Template
 from biz.utils.log import logger
 from biz.service.call_chain_analysis.file_util import FileUtil
+from biz.utils.code_wrapper import CodeWrapper
+
+# 常量定义
+CHANGED_PROMPT_FILENAME = "5_changed_prompt.json"
 
 
 class JavaCodePrinter:
@@ -124,23 +128,25 @@ def generate_markdown_from_json_data(json_data: dict) -> str:
     return printer.generate_markdown_from_data(json_data)
 
 
-def generate_assemble_prompt(changed_methods_file: str, code_context_file: str, project_name: str, workspace_path: str = None) -> str:
+def delete_prompt_file(project_name: str, workspace_path: str = None) -> bool:
     """
-    生成格式化的提示词字段
+    删除格式化字段文件
     
     Args:
-        changed_methods_file: 变更方法数据文件路径
-        code_context_file: Java代码输出数据文件路径
         project_name: 项目名称
         workspace_path: 工作空间路径，默认为当前目录下的workspace
         
     Returns:
-        临时文件路径，包含格式化字段数据
+        删除成功返回True，失败返回False
     """
     workspace_path = workspace_path or os.path.join(os.getcwd(), 'workspace')
-    prompt_templates_file = "conf/prompt_templates.yml"
-    format_fields_map = {}
-    
+    output_file = FileUtil.get_project_file_path(workspace_path, project_name, CHANGED_PROMPT_FILENAME)
+    return FileUtil.delete_file(output_file)
+
+
+def generate_assemble_prompt(changed_methods_file: str, code_context_file: str, project_name: str, workspace_path: str = None) -> str:
+    """生成格式化的提示词字段"""
+
     try:
         # 加载变更方法数据
         changed_methods = FileUtil.load_changed_methods_from_file(changed_methods_file)
@@ -155,7 +161,7 @@ def generate_assemble_prompt(changed_methods_file: str, code_context_file: str, 
             return ""
         
         # 加载prompt模板
-        prompts = _load_prompt_templates(prompt_templates_file)
+        prompts = _load_prompt_templates("conf/prompt_templates.yml")
         if not prompts:
             logger.warn("无法加载prompt模板，跳过format字段生成")
             return ""
@@ -175,6 +181,11 @@ def generate_assemble_prompt(changed_methods_file: str, code_context_file: str, 
             # 获取当前变更的Java代码内容
             context = _get_java_code_context(change_index, code_context)
             
+            # 使用CodeWrapper包裹代码
+            old_code = CodeWrapper.wrap_code_to_md(old_code, file_path)
+            new_code = CodeWrapper.wrap_code_to_md(new_code, file_path)
+            context = CodeWrapper.wrap_code_to_md(context, file_path)
+            
             # 使用Jinja2模板渲染format字段
             template = Template(item_prompt_template)
             format_field = template.render(
@@ -185,14 +196,12 @@ def generate_assemble_prompt(changed_methods_file: str, code_context_file: str, 
             )
             
             # 将结果存储到map中
-            format_fields_map[change_index] = format_field
+            change_data['prompt'] = format_field
+            change_data['language'] = 'java'
 
-        
-        logger.info(f"成功生成 {len(format_fields_map)} 个变更的format字段")
 
-            
         # 将数据写入临时文件
-        output_file = _save_format_fields_to_file(format_fields_map, project_name, workspace_path)
+        output_file = _save_format_fields_to_file(changed_methods, project_name, workspace_path)
         logger.info(f"格式化字段数据已保存到: {output_file}")
         return output_file
             
@@ -200,6 +209,49 @@ def generate_assemble_prompt(changed_methods_file: str, code_context_file: str, 
         logger.error(f"生成format字段过程中发生错误: {str(e)}")
         
     return ""
+
+
+def generate_assemble_web_prompt(webhook_data, changed_method_signatures_map: dict, workspace_path) -> str:
+    """生成格式化的提示词字段"""
+    # 加载prompt模板
+    prompts = _load_prompt_templates("conf/prompt_templates.yml")
+    if not prompts:
+        logger.warn("无法加载prompt模板，跳过format字段生成")
+        return ""
+
+    item_prompt_template = prompts.get("item_prompt", "")
+    if not item_prompt_template:
+        logger.warn("未找到item_prompt模板，跳过format字段生成")
+        return ""
+
+
+    # 为每个变更单独生成format字段
+    for change_index, change_data in changed_method_signatures_map.items():
+        old_code = change_data.get('old_code', '')
+        new_code = change_data.get('new_code', '')
+        file_path = change_data.get('file_path', '')
+        context = change_data.get('content', '')
+
+        # 使用CodeWrapper包裹代码
+        old_code = CodeWrapper.wrap_code_to_md(old_code, file_path)
+        new_code = CodeWrapper.wrap_code_to_md(new_code, file_path)
+        context = CodeWrapper.wrap_code_to_md(context, file_path)
+
+        # 使用Jinja2模板渲染format字段
+        template = Template(item_prompt_template)
+        format_field = template.render(
+            old_code=old_code,
+            new_code=new_code,
+            context=context,
+            file_path=file_path
+        )
+        change_data['prompt'] = format_field
+
+    output_file = _save_format_fields_to_file(changed_method_signatures_map, webhook_data['project']['name'], workspace_path)
+    logger.info(f"格式化字段数据已保存到: {output_file}")
+    return output_file
+
+
 
 
 def _save_format_fields_to_file(format_fields: Dict[int, str], project_name: str = None, workspace_path: str = None) -> str:
@@ -215,9 +267,16 @@ def _save_format_fields_to_file(format_fields: Dict[int, str], project_name: str
         临时文件路径
     """
     try:
-        output_file = FileUtil.get_project_file_path(workspace_path, project_name, "5_changed_prompt.json")
+        output_file = FileUtil.get_project_file_path(workspace_path, project_name, CHANGED_PROMPT_FILENAME)
+
+        # 先读取已存在的数据
+        existing_data = FileUtil.load_json_from_file(output_file) or {}
         
-        if FileUtil.save_json_to_file(format_fields, output_file):
+        # 追加新数据
+        existing_data.update(format_fields)
+        
+        # 保存回文件
+        if FileUtil.save_json_to_file(existing_data, output_file):
             return output_file
         else:
             return ""

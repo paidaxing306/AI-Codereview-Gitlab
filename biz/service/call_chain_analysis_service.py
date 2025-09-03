@@ -8,10 +8,12 @@ from biz.service.call_chain_analysis.file_util import FileUtil
 from biz.service.call_chain_analysis.java_project_analyzer import analyze_java_project_static
 from biz.service.call_chain_analysis.method_call_analyzer import analyze_method_calls_static
 from biz.service.call_chain_analysis.methodcall_to_code_output import format_code_context
-from biz.service.call_chain_analysis.java_code_to_md import generate_assemble_prompt
+from biz.service.call_chain_analysis.java_code_to_md import generate_assemble_prompt, delete_prompt_file,generate_assemble_web_prompt
 from biz.service.call_chain_analysis.extract_changed_signatures import extract_changed_method_signatures_static
 from biz.service.call_chain_analysis.pmd_check_plugin import run_pmd_check_static
 from biz.service.call_chain_analysis.pmd_report_formatter import PMDReportFormatter
+
+from biz.utils.code_parser import GitDiffParser
 
 
 class CallChainAnalysisService:
@@ -31,6 +33,23 @@ class CallChainAnalysisService:
         self.workspace_path = workspace_path or os.path.join(os.getcwd(), 'workspace')
         self.plugin_path = plugin_path or os.path.join(os.getcwd(), 'plugin')
 
+
+    @staticmethod
+    def before_process_changes(service, webhook_data):
+        """
+        在处理开始前，删除旧的 prompt 文件
+        
+        Args:
+            service: CallChainAnalysisService 实例
+            webhook_data: GitLab webhook数据
+        """
+        project_name = webhook_data.get('project', {}).get('name')
+        if project_name:
+            delete_prompt_file(project_name, service.workspace_path)
+ 
+
+
+
     @staticmethod
     def process(webhook_data: dict, github_token: str, changes: list, handler=None) -> Optional[Dict]:
         """
@@ -46,9 +65,33 @@ class CallChainAnalysisService:
             调用链分析结果字典，失败时返回None
         """
         service = CallChainAnalysisService()
-        return service._process_changes(webhook_data, github_token, changes, handler)
 
-    def _process_changes(self, webhook_data: dict, github_token: str, changes: list, handler=None) -> Optional[Dict]:
+        # 清除文件
+        CallChainAnalysisService.before_process_changes(service, webhook_data)
+
+        java_changes = [
+            change for change in changes
+            if change['new_path'].endswith(".java")
+        ]
+
+        web_changes = [
+            change for change in changes
+            if change['new_path'].endswith((".js", ".html", ".vue", ".jsx", ".tsx"))
+        ]
+
+        ### .java
+        result=[]
+        if java_changes:
+            result = service._process_java_changes(webhook_data, github_token, changes, handler)
+
+        ### web .js,.html,.vue,.jsx,.tsx
+        if web_changes:
+            result =  service._process_web_changes(webhook_data, changes, handler)
+
+        return result
+
+
+    def _process_java_changes(self, webhook_data: dict, github_token: str, changes: list, handler=None) -> Optional[Dict]:
         """
         处理代码变更的调用链分析
 
@@ -121,7 +164,7 @@ class CallChainAnalysisService:
                 logger.warn("Java代码输出生成失败，跳过调用链分析")
                 return None
 
-            # 6. 组装提示词产生{workspace/project/5_changed_prompt.json}
+            # 6. 组装提示词产生{workspace/project/CHANGED_PROMPT_FILENAME}
             changed_prompt_file = generate_assemble_prompt(changed_methods_file, code_context_file,
                                                            project_info['name'], self.workspace_path)
             if not changed_prompt_file:
@@ -134,6 +177,39 @@ class CallChainAnalysisService:
         except Exception as e:
             logger.error(f"调用链分析过程中发生错误: {str(e)}")
             return None
+
+    def _process_web_changes(self, webhook_data: dict, changes: list, handler=None) -> Optional[ Dict]:
+        """处理代码变更的调用链分析"""
+
+        # 获取便跟代码
+        changed_method_signatures_map = {}
+        for i, change in enumerate(changes):
+
+            diff_content = change.get('diff', '')
+            file_path = change.get('new_path', '')
+
+            diff_parser = GitDiffParser(diff_content)
+            diff_parser.parse_diff()
+
+            changed_method_signatures_map[i] = {
+                'old_code': diff_parser.get_old_code(),
+                'new_code':  diff_parser.get_new_code(),
+                'file_path': file_path,
+                'diffs_text': diff_content,
+                'language':"web"
+            }
+
+        # 补充原文
+        for i, e in changed_method_signatures_map.items():
+            e['content']= handler.get_file_content(e['file_path'],webhook_data['object_attributes']['source_branch'])
+
+        changed_prompt_file= generate_assemble_web_prompt(webhook_data, changed_method_signatures_map, self.workspace_path)
+        return FileUtil.load_prompts_from_file(changed_prompt_file)
+
+
+
+
+
 
     def _extract_java_files_from_changes(self, changes: list, project_path: str) -> List[str]:
         """

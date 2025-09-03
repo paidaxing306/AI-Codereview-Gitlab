@@ -123,14 +123,12 @@ call_chain_analysis:
     变更代码位置：{{ file_path }}
     
     原始代码：
-    ```java
     {{ old_code }}
-    ```
+
     
     修改后代码：
-    ```java
     {{ new_code }}
-    ```
+
     
-    调用和被调用的代码：
+    代码上下文：
     {{ context }}
