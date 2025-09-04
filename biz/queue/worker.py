@@ -1,7 +1,7 @@
 import os
 import traceback
 from datetime import datetime
-
+import re
 from biz.entity.review_entity import MergeRequestReviewEntity, PushReviewEntity,MergeRequestReviewChainEntity
 from biz.event.event_manager import event_manager
 from biz.gitlab.webhook_handler import filter_changes, MergeRequestHandler, PushHandler
@@ -11,6 +11,7 @@ from biz.service.call_chain_analysis_service import CallChainAnalysisService
 from biz.utils.code_reviewer import CodeReviewer
 from biz.utils.im import notifier
 from biz.utils.log import logger
+from biz.service.call_chain_analysis.pmd_report_formatter import PMDReportFormatter
 
 
 
@@ -354,8 +355,16 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
     # 遍历changes_prompt_json的value，循环执行代码审查
     logger.info(f"开始处理调用链分析，包含 {len(changes_prompt_json)} 个变更的提示词")
 
+
+
+    # 收集所有需要添加的审查结果
+    review_notes_to_add = []
+    review_notes_to_add.append("## 🧠 AI审查报告")
+    review_notes_to_add.append("| 类名方法名 | 存在的问题 | 问题级别 |")
+    review_notes_to_add.append("|------------|------------|----------|")
+    seen_lines = set()
     for change_index, content in changes_prompt_json.items():
-        prompt=content['prompt']
+        prompt = content['prompt']
         if not prompt or not prompt.strip():  # 确保提示词不为空
             logger.info(f"Change {change_index} 的提示词为空，跳过处理")
             continue
@@ -371,14 +380,42 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
             review_result
         )
 
-        if len(filtered_review_result.split('\n')) > 2:
-            # 将review结果提交到Gitlab的 notes
-            handler.add_merge_request_notes(
-                f'变更内容 {change_index}: \n{filtered_review_result}')
+        # 分割结果并按顺序去重
+        if filtered_review_result and filtered_review_result.strip():
+            result_lines = filtered_review_result.split('\n')
+            if len(result_lines) > 2:
+                result_lines = result_lines[2:]
+                gitlab_url = PMDReportFormatter._convert_to_gitlab_url_by_path(content['file_path'], webhook_data)
+                for line in result_lines:
+                    if line not in seen_lines:
+                        line=format_content(line,gitlab_url)
+                        review_notes_to_add.append(line)
+                        seen_lines.add(line)
 
-        logger.info(f"Change {change_index} 的调用链分析完成")
+    if review_notes_to_add:
+        # 统一添加所有审查结果到GitLab notes
+        handler.add_merge_request_notes('\n'.join(review_notes_to_add))
+        logger.info("调用链分析完成")
 
 
+def format_content(line, target_url):
+    """
+    将格式为 | xxx | 原因 | 级别 | 的字符串，
+    替换为 | [xxx](url) | 原因 | 级别 |
+
+    参数:
+        line: 待处理的字符串（格式如 | xxx | 原因 | 级别 |）
+        target_url: 链接目标地址
+
+    返回:
+        替换后的字符串
+    """
+    # 正则表达式匹配第一列内容，保持其他列不变
+    # 匹配 | 第一列内容 | 并替换为 | [第一列内容](链接) |
+    pattern = r'\| ([^|]+?) \|'
+    # 只替换第一个匹配项（第一列）
+    replaced_line = re.sub(pattern, r'| [\1]({}) |'.format(target_url), line, count=1)
+    return replaced_line
 
 
 

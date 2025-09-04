@@ -50,7 +50,7 @@ class MethodCallToCodeOutput:
             self.method_call_data = self._load_json_file(self.method_call_file)
         if self.analyze_project_file:
             self.analyze_project_data = self._load_json_file(self.analyze_project_file)
-        
+
         # 初始化缓存
         self._init_caches()
 
@@ -64,7 +64,7 @@ class MethodCallToCodeOutput:
         """
         self.method_call_data = method_call_data
         self.analyze_project_data = analyze_project_data
-        
+
         # 初始化缓存
         self._init_caches()
 
@@ -158,7 +158,7 @@ class MethodCallToCodeOutput:
 
     def _build_class_source_code(self, class_signature_name: str, method_signatures: List[str]) -> str:
         """
-        构建完整的类源码（class_source_code + method_source_code）
+        构建完整的类源码（class_source_code + field_source_code + method_source_code）
 
         Args:
             class_signature_name: 类签名名称
@@ -176,26 +176,52 @@ class MethodCallToCodeOutput:
             print(f"警告: 未找到类 {class_signature_name} 的class_source_code")
             return ""
 
-        # 从method_signatures中获取方法源码
+        # 收集所有方法用到的字段
+        used_field_signatures = set()
         method_source_codes = []
+
         for method_signature in method_signatures:
             if method_signature in self.method_signatures:
-                method_source_code = self.method_signatures[method_signature].get('method_source_code', '')
+                method_data = self.method_signatures[method_signature]
+                method_source_code = method_data.get('method_source_code', '')
                 if method_source_code:
                     method_source_codes.append(method_source_code)
                 else:
                     print(f"警告: 未找到方法 {method_signature} 的method_source_code")
+
+                # 收集方法中使用的字段
+                usaged_fields = method_data.get('usaged_fields', [])
+                used_field_signatures.update(usaged_fields)
             else:
                 print(f"警告: 未找到方法 {method_signature} 在method_signatures中")
 
-        # 组合类源码和方法源码
-        if method_source_codes:
-            # 在类源码的最后一个大括号前插入方法源码
-            combined_source = class_source_code.rstrip()
-            if combined_source.endswith('}'):
-                combined_source = combined_source[:-1]  # 移除最后的 }
+        # 从field_signatures中获取字段源码
+        field_source_codes = []
 
-                # 添加方法源码
+        field_signatures_data = self.analyze_project_data.get('field_signatures', {})
+        for field_signature_name in used_field_signatures:
+            field_source_code = field_signatures_data.get(field_signature_name, {}).get('field_source_code', '')
+            if field_source_code:
+                field_source_codes.append(field_source_code)
+
+        # 组合类源码、字段源码和方法源码
+        combined_source = class_source_code.rstrip()
+        if combined_source.endswith('}'):
+            combined_source = combined_source[:-1]  # 移除最后的 }
+
+            # 添加字段源码
+            if field_source_codes:
+                combined_source += "\n    // 方法中使用的字段"
+                for field_source in field_source_codes:
+                    # 缩进字段源码
+                    field_lines = field_source.split('\n')
+                    for line in field_lines:
+                        if line.strip():  # 跳过空行
+                            combined_source += f"\n    {line}"
+                combined_source += "\n"
+
+            # 添加方法源码
+            if method_source_codes:
                 for method_source in method_source_codes:
                     # 缩进方法源码
                     method_lines = method_source.split('\n')
@@ -203,11 +229,9 @@ class MethodCallToCodeOutput:
                         combined_source += f"\n    {line}"
                     combined_source += "\n"
 
-                combined_source += "}"  # 重新添加最后的 }
-            else:
-                print(f"警告: 类 {class_signature_name} 的源码格式异常")
-                combined_source = class_source_code
+            combined_source += "}"  # 重新添加最后的 }
         else:
+            print(f"警告: 类 {class_signature_name} 的源码格式异常")
             combined_source = class_source_code
 
         return combined_source
@@ -243,6 +267,15 @@ class MethodCallToCodeOutput:
                 if class_source_code:
                     class_source_map[class_signature_name] = class_source_code
 
+            # 取方法本身的源码同时，再取同文件里的调用到的方法
+            need_class = method_signature.rpartition('.')[0]
+            need_methods = [method_signature]
+
+            for sig in self.method_signatures[method_signature]['usage_method_signature_name']:
+                if need_class == sig.rpartition('.')[0]:
+                    need_methods.append(sig)
+
+            class_source_map['self'] = self._build_class_source_code(need_class, need_methods)
             # 5. 把class_source_map放入4_code_context.json
             if class_source_map:
                 result[method_signature] = class_source_map
@@ -254,11 +287,9 @@ class MethodCallToCodeOutput:
         if self.output_file:
             self._save_result(result)
             print(f"\n转换完成，结果已保存到 {self.output_file}")
-        
+
         print(f"总共处理了 {len(result)} 个方法调用关系")
         return result
-
-
 
     def _save_result(self, result: dict):
         """保存结果到文件"""
@@ -285,7 +316,8 @@ def convert_method_calls_to_code_output(method_call_data: dict, analyze_project_
     return converter.convert()
 
 
-def format_code_context(method_calls_file: str, analysis_file: str, project_name: str = None, workspace_path: str = None) -> str:
+def format_code_context(method_calls_file: str, analysis_file: str, project_name: str = None,
+                        workspace_path: str = None) -> str:
     """
     生成Java代码输出
     
@@ -299,14 +331,14 @@ def format_code_context(method_calls_file: str, analysis_file: str, project_name
         临时文件路径，包含Java代码输出数据
     """
     code_context_map = {}
-    
+
     try:
         # 加载方法调用关系数据
         method_calls = FileUtil.load_method_calls_from_file(method_calls_file)
         if not method_calls:
             logger.warn("无法加载方法调用关系数据，跳过code_context生成")
             return ""
-        
+
         if not os.path.exists(analysis_file):
             logger.warn(f"1_analyze_project.json 文件不存在，跳过code_context生成: {analysis_file}")
             return ""
@@ -316,40 +348,42 @@ def format_code_context(method_calls_file: str, analysis_file: str, project_name
         if analyze_project_data is None:
             logger.warn(f"1_analyze_project.json 文件不存在或读取失败，跳过code_context生成: {analysis_file}")
             return ""
-        
+
         # 为每个变更生成code_context
         for change_index, method_calls_data in method_calls.items():
             try:
                 logger.info(f"开始为Change {change_index} 生成code_context")
-                
+
                 # 调用转换方法
                 code_context = convert_method_calls_to_code_output(
                     method_call_data=method_calls_data,
                     analyze_project_data=analyze_project_data
                 )
-                
+
                 # 将结果存储到map中
                 code_context_map[change_index] = code_context
-                
+
                 logger.info(f"Change {change_index} 的code_context已生成，包含 {len(code_context)} 个方法")
-                
+
             except Exception as e:
                 logger.error(f"为Change {change_index} 生成code_context时发生错误: {str(e)}")
                 continue
-        
+
         logger.info(f"成功生成 {len(code_context_map)} 个变更的code_context")
-            
+
         # 将数据写入临时文件
         output_file = _save_code_context_to_file(code_context_map, project_name, workspace_path)
         logger.info(f"Java代码输出数据已保存到: {output_file}")
         return output_file
-            
+
     except Exception as e:
         logger.error(f"生成code_context过程中发生错误: {str(e)}")
-        
+
     return ""
 
-def _save_code_context_to_file(code_context: Dict[int, Dict], project_name: str = None, workspace_path: str = None) -> str:
+
+def _save_code_context_to_file(code_context: Dict[int, Dict], project_name: str = None,
+                               workspace_path: str = None) -> str:
     """
     将Java代码输出数据保存到临时文件
     
@@ -363,14 +397,12 @@ def _save_code_context_to_file(code_context: Dict[int, Dict], project_name: str 
     """
     try:
         output_file = FileUtil.get_project_file_path(workspace_path, project_name, "4_code_context.json")
-        
+
         if FileUtil.save_json_to_file(code_context, output_file):
             return output_file
         else:
             return ""
-        
+
     except Exception as e:
         logger.error(f"保存Java代码输出数据到文件时发生错误: {str(e)}")
         return ""
-
-

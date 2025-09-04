@@ -18,9 +18,7 @@ class JavaCodePrinter:
         初始化Java代码打印机
         """
         self.java_code_data = {}
-    
 
-    
     def _clean_java_code(self, java_code: str) -> str:
         """
         清理Java代码，减少过多空行，保持原有缩进
@@ -28,11 +26,11 @@ class JavaCodePrinter:
         """
         if not java_code or not java_code.strip():
             return java_code
-            
+
         lines = java_code.split('\n')
         cleaned_lines = []
         consecutive_empty_lines = 0
-        
+
         for line in lines:
             if line.strip():
                 # 非空行，重置连续空行计数
@@ -43,74 +41,53 @@ class JavaCodePrinter:
                 consecutive_empty_lines += 1
                 if consecutive_empty_lines <= 1:
                     cleaned_lines.append(line)
-        
-        return '\n'.join(cleaned_lines)
-    
 
-    
+        return '\n'.join(cleaned_lines)
+
     def print_markdown(self):
         """以简洁的markdown格式打印Java代码"""
         target_method = list(self.java_code_data.keys())[0]
         classes_data = self.java_code_data[target_method]
-        
+
         print(f"# {target_method.split('.')[-1].split('(')[0]} 相关代码")
         print(f"**目标方法**: `{target_method}`\n")
-        
+
         for class_signature, java_code in classes_data.items():
             class_name = class_signature.split('.')[-1]
             cleaned_code = self._clean_java_code(java_code)
-            
+
             print(f"## {class_name}")
             print(f"**包路径**: `{class_signature}`\n")
             print("```java")
             print(cleaned_code)
             print("```\n")
-    
+
     def print_compact_markdown(self):
         """以极简的markdown格式打印Java代码"""
         target_method = list(self.java_code_data.keys())[0]
         classes_data = self.java_code_data[target_method]
 
         print(f"# {target_method}\n")
-        
+
         for class_signature, java_code in classes_data.items():
             class_name = class_signature.split('.')[-1]
             cleaned_code = self._clean_java_code(java_code)
-            
+
             print(f"## {class_name}")
             print("```java")
             print(cleaned_code)
             print("```\n")
-    
+
     def generate_markdown_from_data(self, json_data: dict) -> str:
-        """
-        从JSON数据生成markdown字符串
-        
-        Args:
-            json_data: Java代码输出数据，格式为 {method_signature: {class_signature: java_code, ...}, ...}
-            
-        Returns:
-            str: markdown格式的字符串
-        """
+        """从JSON数据生成markdown字符串"""
         markdown_parts = []
-        markdown_parts.append("# 相关Java代码")
-        
         # 遍历所有方法
         for method_signature, classes_data in json_data.items():
-            markdown_parts.append(f"## {method_signature}")
-            
-            # 遍历所有类
             for class_signature, java_code in classes_data.items():
-                class_name = class_signature.split('.')[-1]
                 cleaned_code = self._clean_java_code(java_code)
-                
-                markdown_parts.append(f"### {class_name}")
-                markdown_parts.append(f"**包路径**: `{class_signature}`")
                 markdown_parts.append("```java")
                 markdown_parts.append(cleaned_code)
                 markdown_parts.append("```")
-                markdown_parts.append("")  # 添加空行分隔
-            
         return "\n".join(markdown_parts)
 
 
@@ -144,7 +121,8 @@ def delete_prompt_file(project_name: str, workspace_path: str = None) -> bool:
     return FileUtil.delete_file(output_file)
 
 
-def generate_assemble_prompt(changed_methods_file: str, code_context_file: str, project_name: str, workspace_path: str = None) -> str:
+def generate_assemble_prompt(changed_methods_file: str, code_context_file: str, project_name: str,
+                             workspace_path: str = None) -> str:
     """生成格式化的提示词字段"""
 
     try:
@@ -153,61 +131,37 @@ def generate_assemble_prompt(changed_methods_file: str, code_context_file: str, 
         if not changed_methods:
             logger.warn("无法加载变更方法数据，跳过format字段生成")
             return ""
-        
+
         # 加载Java代码输出数据
         code_context = FileUtil.load_code_context_from_file(code_context_file)
         if not code_context:
             logger.warn("无法加载Java代码输出数据，跳过format字段生成")
             return ""
-        
-        # 加载prompt模板
-        prompts = _load_prompt_templates("conf/prompt_templates.yml")
-        if not prompts:
-            logger.warn("无法加载prompt模板，跳过format字段生成")
-            return ""
-
-        item_prompt_template = prompts.get("item_prompt", "")
-        if not item_prompt_template:
-            logger.warn("未找到item_prompt模板，跳过format字段生成")
-            return ""
 
         # 为每个变更单独生成format字段
         for change_index, change_data in changed_methods.items():
-
             old_code = change_data.get('old_code', '')
             new_code = change_data.get('new_code', '')
             file_path = change_data.get('file_path', '')
-            
-            # 获取当前变更的Java代码内容
-            context = _get_java_code_context(change_index, code_context)
-            
-            # 使用CodeWrapper包裹代码
-            old_code = CodeWrapper.wrap_code_to_md(old_code, file_path)
-            new_code = CodeWrapper.wrap_code_to_md(new_code, file_path)
-            context = CodeWrapper.wrap_code_to_md(context, file_path)
-            
-            # 使用Jinja2模板渲染format字段
-            template = Template(item_prompt_template)
-            format_field = template.render(
-                old_code=old_code,
-                new_code=new_code,
-                context=context,
-                file_path=file_path
-            )
-            
-            # 将结果存储到map中
-            change_data['prompt'] = format_field
-            change_data['language'] = 'java'
+            # generate_markdown_from_json_data(code_context[change_index]['self'])
 
+            # 获取当前变更的Java代码内容
+
+            contents= [val for key, val in next(iter(code_context[change_index].values())).items() if key == "self"]
+            context = f"```java\n{"\n\n".join(contents)}\n```"
+
+            # 将结果存储到map中
+            change_data['prompt'] = context
+            change_data['language'] = 'java'
 
         # 将数据写入临时文件
         output_file = _save_format_fields_to_file(changed_methods, project_name, workspace_path)
         logger.info(f"格式化字段数据已保存到: {output_file}")
         return output_file
-            
+
     except Exception as e:
         logger.error(f"生成format字段过程中发生错误: {str(e)}")
-        
+
     return ""
 
 
@@ -223,7 +177,6 @@ def generate_assemble_web_prompt(webhook_data, changed_method_signatures_map: di
     if not item_prompt_template:
         logger.warn("未找到item_prompt模板，跳过format字段生成")
         return ""
-
 
     # 为每个变更单独生成format字段
     for change_index, change_data in changed_method_signatures_map.items():
@@ -247,14 +200,14 @@ def generate_assemble_web_prompt(webhook_data, changed_method_signatures_map: di
         )
         change_data['prompt'] = format_field
 
-    output_file = _save_format_fields_to_file(changed_method_signatures_map, webhook_data['project']['name'], workspace_path)
+    output_file = _save_format_fields_to_file(changed_method_signatures_map, webhook_data['project']['name'],
+                                              workspace_path)
     logger.info(f"格式化字段数据已保存到: {output_file}")
     return output_file
 
 
-
-
-def _save_format_fields_to_file(format_fields: Dict[int, str], project_name: str = None, workspace_path: str = None) -> str:
+def _save_format_fields_to_file(format_fields: Dict[int, str], project_name: str = None,
+                                workspace_path: str = None) -> str:
     """
     将格式化字段数据保存到临时文件
     
@@ -271,16 +224,16 @@ def _save_format_fields_to_file(format_fields: Dict[int, str], project_name: str
 
         # 先读取已存在的数据
         existing_data = FileUtil.load_json_from_file(output_file) or {}
-        
+
         # 追加新数据
         existing_data.update(format_fields)
-        
+
         # 保存回文件
         if FileUtil.save_json_to_file(existing_data, output_file):
             return output_file
         else:
             return ""
-        
+
     except Exception as e:
         logger.error(f"保存格式化字段数据到文件时发生错误: {str(e)}")
         return ""
@@ -294,16 +247,3 @@ def _load_prompt_templates(prompt_templates_file: str) -> Optional[Dict]:
     except Exception as e:
         logger.error(f"加载prompt模板失败: {str(e)}")
         return None
-
-
-def _get_java_code_context(change_index: int, code_context: Dict[int, Dict]) -> str:
-    """获取Java代码上下文"""
-    try:
-        if change_index in code_context:
-            java_code_data = code_context[change_index]
-            return generate_markdown_from_json_data(java_code_data)
-    except Exception as e:
-        logger.error(f"处理Change {change_index} 的Java代码数据时发生错误: {str(e)}")
-    
-    return "无相关Java代码"
-

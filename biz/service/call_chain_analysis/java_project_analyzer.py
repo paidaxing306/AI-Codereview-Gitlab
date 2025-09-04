@@ -2,6 +2,7 @@ import json
 import os
 import re
 import time
+import string
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Tuple, Optional
 
@@ -11,6 +12,7 @@ from tree_sitter import Language, Parser
 
 
 from biz.service.call_chain_analysis.file_util import FileUtil
+from biz.utils.java_util import JavaFieldExtractor
 from biz.utils.log import logger
 
 
@@ -202,23 +204,11 @@ class JavaProjectAnalyzer:
         # 建立接口实现类索引
         self._build_interface_implementation_index()
 
-  
-
-
-
         # 分析所有方法之间的调用关系
         start_time = time.time()
 
-        for  method_source_code,method_sig in self.method_signatures.items():
-            # 使用正则表达式分析方法调用
-            used_methods = self._analyze_method_method_usage(
-                method_sig.method_source_code,
-                method_sig.usaged_fields,
-                method_sig.class_signature_name
-
-            )
-            
-            # 更新MethodSignature中的usage_method_signature_name
+        for method_signture_name, method_sig in self.method_signatures.items():
+            used_methods = self._analyze_method_method_usage(method_sig,method_signture_name )
             method_sig.usage_method_signature_name = used_methods
 
         method_analysis_time = time.time() - start_time
@@ -436,7 +426,7 @@ class JavaProjectAnalyzer:
 
         # 分析字段
         start_time = time.time()
-        field_names = self._analyze_class_fields(content, class_signature_name, file_info['import_mappings'])
+        field_names = self._analyze_class_fields(content, class_signature_name, file_info['import_mappings'],class_type)
         field_analysis_time = time.time() - start_time
         if field_analysis_time > 0.5:
             logger.info(f"分析类 {class_signature_name} 字段完成，耗时: {field_analysis_time:.3f}秒，字段数量: {len(field_names)}")
@@ -457,44 +447,52 @@ class JavaProjectAnalyzer:
 
 
 
-    def _analyze_class_fields(self, class_content: str, class_signature_name: str, import_mappings: Dict[str, str]) -> List[str]:
+    def _analyze_class_fields(self, class_content: str, class_signature_name: str, import_mappings: Dict[str, str],
+                              class_type) -> List[str]:
+        if class_type == 'interface':
+            return []
+
         """分析类中的字段"""
         start_time = time.time()
-        
-        fields = self._extract_fields(class_content)
+
+        extractor = JavaFieldExtractor()
+        field_details = extractor.extract_fields_with_info(class_content)
         extract_time = time.time() - start_time
-        
+
         field_names = []
         process_start_time = time.time()
-        
-        for field in fields:
+
+        for field_detail in field_details:
+            field = field_detail['source']
             # 从字段代码中提取字段名
             match = self._field_name_pattern.search(field)
             field_name = match.group(1) if match else ""
-            
+
             # 从字段代码中提取字段类型
             field_type = self._extract_field_type(field)
-            
+
             # 根据字段类型和import信息确定正确的包名
-            field_class_signature_name = self._resolve_field_type_package(field_type, import_mappings, class_signature_name)
-            
+            field_class_signature_name = self._resolve_field_type_package(field_type, import_mappings,
+                                                                          class_signature_name)
+
             # 直接使用字段类签名名称
             field_signature_name = f"{field_class_signature_name}.{field_name}"
             field_names.append(field_signature_name)
-            
+
             self.field_signatures[field_signature_name] = FieldSignature(
                 field_class_signature_name=field_class_signature_name,
                 field_name=field_name,
                 field_signature_name=field_signature_name,
                 field_source_code=self.format_java_code(field.strip())
             )
-        
+
         process_time = time.time() - process_start_time
         total_time = time.time() - start_time
-        
+
         if total_time > 0.5:
-            logger.info(f"分析类 {class_signature_name} 字段耗时过长 - 总耗时: {total_time:.3f}秒，提取字段: {extract_time:.3f}秒，处理字段: {process_time:.3f}秒，字段数量: {len(field_names)}")
-        
+            logger.info(
+                f"分析类 {class_signature_name} 字段耗时过长 - 总耗时: {total_time:.3f}秒，提取字段: {extract_time:.3f}秒，处理字段: {process_time:.3f}秒，字段数量: {len(field_names)}")
+
         return field_names
 
     def _analyze_class_methods(self, class_content: str, class_signature_name: str, field_names: List[str],
@@ -817,26 +815,6 @@ class JavaProjectAnalyzer:
                     break
         
         return class_content
-    
-    def _extract_fields(self, class_content: str) -> List[str]:
-        """提取类中的字段定义"""
-        fields = []
-        
-        # 首先分析方法的位置，创建排除区域
-        method_regions = self._get_method_regions(class_content)
-        
-        # 使用预编译的正则表达式找到所有可能的字段定义
-        field_matches = self._class_level_field_pattern.finditer(class_content)
-        
-        for match in field_matches:
-            field_start = match.start()
-            field_text = match.group(0)
-            
-            # 检查字段是否在任何方法区域内
-            if not self._is_in_method_region(field_start, method_regions):
-                fields.append(field_text)
-        
-        return fields
     
     def _get_method_regions(self, class_content: str) -> List[Tuple[int, int]]:
         """获取所有方法的位置区域"""
@@ -1269,23 +1247,23 @@ class JavaProjectAnalyzer:
         
         return used_fields
 
-    def _analyze_method_method_usage(self, method_code: str, usaged_fields: List[str],class_signature_name:str) -> List[str]:
+    def _analyze_method_method_usage(self, method_sig: MethodSignature, method_signature_key: str) -> List[str]:
         """
         分析方法中调用的其他方法
 
         Args:
-            method_code: 方法源代码
-            usaged_fields: 方法中使用的字段列表
+            method_sig: 方法签名对象
+            method_signature_key: 方法签名的key
 
         Returns: 方法中调用的方法列表
         """
-        if  self.class_signatures[class_signature_name].class_type == 'interface':
+        if  method_sig.class_type == 'interface':
             return []
 
         method_calls = []
         
         # 遍历usaged_fields，分析每个字段的方法调用`
-        for field_signature_name in usaged_fields:
+        for field_signature_name in method_sig.usaged_fields:
             # 从字段签名中提取field_class_signature_name和field_name
             if field_signature_name not in self.field_signatures:
                 continue
@@ -1307,7 +1285,7 @@ class JavaProjectAnalyzer:
                 field_method_call = f"{field_name}.{simple_method_name}"
                 
                 # 在method_code中查找字段方法调用
-                if field_method_call in method_code:
+                if field_method_call in method_sig.method_source_code:
                     if class_sig.class_type == 'interface':
                         # 如果是接口，查找其实现类并添加实现方法
                         implementations = self.interface_implementation_index.get(field_class_signature_name, [])
@@ -1326,8 +1304,52 @@ class JavaProjectAnalyzer:
                     else:
                         # 如果是类，直接添加方法签名
                         method_calls.append(method_signature_name)
+
+        # 方法内部调用
+        simple_method_signature_name_map = self.class_signatures[method_sig.class_signature_name].simple_method_signature_name_map
+        for tmp_method_signature_key, simpleName in simple_method_signature_name_map.items():
+            # 判断同一个method_code 中是否发生类的内部调用
+            search_key= tmp_method_signature_key[
+                     tmp_method_signature_key.rfind('.') + 1: tmp_method_signature_key.find('(') + 1]
+            if method_signature_key != tmp_method_signature_key and self._is_method_called_in_code(search_key, method_sig.method_source_code):
+                method_calls.append(tmp_method_signature_key)
+
+
         
         return list(set(method_calls))
+    
+    def _is_method_called_in_code(self, method_name: str, method_code: str) -> bool:
+        """
+        精确判断方法是否在代码中被调用
+        避免简单的字符串包含匹配导致的误匹配问题
+        
+        Args:
+            method_name: 方法名（可能已包含括号，如 'loadLatestLimit('）
+            method_code: 方法代码
+            
+        Returns:
+            bool: 是否在代码中被调用
+        """
+        if not method_name or not method_code:
+            return False
+
+         # 为了方便匹配，源码移除所有空白字符
+        method_code = method_code.translate(str.maketrans('', '', string.whitespace));
+
+        patterns = [
+            f'={method_name}',          # = + 方法名
+            f'this.{method_name}',        # this. + 方法名
+            f';{method_name}',          # ; + 方法名
+            f'({method_name}',         # ( + 方法名
+            f',{method_name}',          # , + 方法名
+        ]
+
+        # 检查是否匹配任何一个模式
+        for pattern in patterns:
+            if  pattern in method_code:
+                return True
+                
+        return False
     
     def _extract_method_name_from_code(self, method_code: str) -> str:
         """从方法代码中提取方法名"""

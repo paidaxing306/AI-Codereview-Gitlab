@@ -169,7 +169,7 @@ class MethodCallAnalyzer:
         
         return {
             "calls_out": called_methods,  # 该方法调用的其他方法（向下调用链）
-            "calls_in": caller_methods    # 调用该方法的方法（向上调用链）
+            "calls_in": caller_methods,    # 调用该方法的方法（向上调用链）
         }
 
 
@@ -206,7 +206,7 @@ def analyze_method_calls_static(changed_methods_file: str, analysis_file: str, p
         
         # 创建方法调用分析器
         analyzer = MethodCallAnalyzer(analysis_file)
-        
+
         # 为每个变更的方法生成调用关系JSON
         method_count = 0
         for change_index, change_data in changed_methods.items():
@@ -219,18 +219,16 @@ def analyze_method_calls_static(changed_methods_file: str, analysis_file: str, p
                     logger.info(f"分析Change {change_index} 的第 {method_count} 个方法: {method_signature}")
                     
                     # 获取完整的调用关系数据
-                    # max_calls_out=1: 分析该方法调用的其他方法，最多分析1层深度
-                    # max_calls_in=3: 分析调用该方法的方法，最多分析3层高度
                     relationship = analyzer.get_complete_method_relationship(
                         method_signature=method_signature,
-                        max_calls_out=1,
-                        max_calls_in=2
+                        max_calls_out=3,
+                        max_calls_in=3
                     )
                     
                     # 将调用关系数据添加到当前变更的JSON中
                     change_method_calls_data[method_signature] = {
                         "calls_out": relationship["calls_out"],
-                        "calls_in": relationship["calls_in"]
+                        "calls_in": relationship["calls_in"],
                     }
                     
                     logger.info(f"方法 {method_signature} 的调用关系已分析完成")

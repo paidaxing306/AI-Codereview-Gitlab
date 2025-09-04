@@ -142,9 +142,7 @@ class CodeReviewer(BaseReviewer):
             call_chain_prompts["system_message"],
             {
                 "role": "user",
-                "content": call_chain_prompts["user_message"]["content"].format(
-                    diffs_text=prompt_text, commits_text=""
-                ),
+                "content": call_chain_prompts["user_message"]["content"].format(context=prompt_text),
             },
         ]
         return self.call_llm(messages)
@@ -178,16 +176,9 @@ class CodeReviewer(BaseReviewer):
                     logger.warning(f"未找到文件类型 {language} 的system_prompt配置，使用默认java配置")
                     language = "java"
 
-                # 使用Jinja2渲染模板
-                def render_template(template_str: str) -> str:
-                    return Template(template_str).render(style="professional")
-
-                system_prompt = render_template(prompts["system_prompt"][language])
-                user_prompt = render_template(prompts["user_prompt"])
-
                 return {
-                    "system_message": {"role": "system", "content": system_prompt},
-                    "user_message": {"role": "user", "content": user_prompt},
+                    "system_message": {"role": "system", "content":  prompts["system_prompt"][language]},
+                    "user_message": {"role": "user", "content":  prompts["item_prompt"]},
                 }
         except (FileNotFoundError, KeyError, yaml.YAMLError) as e:
             logger.error(f"加载调用链分析提示词配置失败: {e}")
