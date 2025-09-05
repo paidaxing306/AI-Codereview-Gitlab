@@ -211,7 +211,7 @@ class MethodCallToCodeOutput:
 
             # 添加字段源码
             if field_source_codes:
-                combined_source += "\n    // 方法中使用的字段"
+                combined_source += "\n"
                 for field_source in field_source_codes:
                     # 缩进字段源码
                     field_lines = field_source.split('\n')

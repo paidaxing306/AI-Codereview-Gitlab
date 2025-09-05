@@ -13,7 +13,6 @@ from biz.service.call_chain_analysis.extract_changed_signatures import extract_c
 from biz.service.call_chain_analysis.pmd_check_plugin import run_pmd_check_static
 from biz.service.call_chain_analysis.pmd_report_formatter import PMDReportFormatter
 
-from biz.utils.code_parser import GitDiffParser
 
 
 class CallChainAnalysisService:
@@ -85,8 +84,8 @@ class CallChainAnalysisService:
             result = service._process_java_changes(webhook_data, github_token, changes, handler)
 
         ### web .js,.html,.vue,.jsx,.tsx
-        # if web_changes:
-        #     result =  service._process_web_changes(webhook_data, changes, handler)
+        if web_changes:
+            result = service._process_web_changes(webhook_data, changes)
 
         return result
 
@@ -178,32 +177,9 @@ class CallChainAnalysisService:
             logger.error(f"调用链分析过程中发生错误: {str(e)}")
             return None
 
-    def _process_web_changes(self, webhook_data: dict, changes: list, handler=None) -> Optional[ Dict]:
+    def _process_web_changes(self, webhook_data: dict, changes: list) -> Optional[ Dict]:
         """处理代码变更的调用链分析"""
-
-        # 获取便跟代码
-        changed_method_signatures_map = {}
-        for i, change in enumerate(changes):
-
-            diff_content = change.get('diff', '')
-            file_path = change.get('new_path', '')
-
-            diff_parser = GitDiffParser(diff_content)
-            diff_parser.parse_diff()
-
-            changed_method_signatures_map[i] = {
-                'old_code': diff_parser.get_old_code(),
-                'new_code':  diff_parser.get_new_code(),
-                'file_path': file_path,
-                'diffs_text': diff_content,
-                'language':"web"
-            }
-
-        # 补充原文
-        for i, e in changed_method_signatures_map.items():
-            e['content']= handler.get_file_content(e['file_path'],webhook_data['object_attributes']['source_branch'])
-
-        changed_prompt_file= generate_assemble_web_prompt(webhook_data, changed_method_signatures_map, self.workspace_path)
+        changed_prompt_file= generate_assemble_web_prompt(webhook_data, changes, self.workspace_path)
         return FileUtil.load_prompts_from_file(changed_prompt_file)
 
 

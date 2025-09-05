@@ -51,9 +51,7 @@ class BaseReviewer(abc.ABC):
         review_result = self.client.completions(messages=messages)
         # 计算耗时
         elapsed_time = time.time() - start_time
-        
-        logger.info(f"LLM调用耗时: {elapsed_time:.3f}秒")
-        logger.info(f"收到 AI 返回结果: {review_result}")
+        logger.info(f"收到 AI  返回结果 耗时: {elapsed_time:.3f}秒 : {review_result}")
         return review_result
 
     @abc.abstractmethod
@@ -131,6 +129,10 @@ class CodeReviewer(BaseReviewer):
 
         if review_result.startswith("```markdown") and review_result.endswith("```"):
             return review_result[11:-3].strip()
+        if review_result.startswith("```json") and review_result.endswith("```"):
+            return review_result[8:-3].strip()
+        if review_result.startswith("```xml") and review_result.endswith("```"):
+            return review_result[7:-3].strip()
         return review_result
 
     def review_call_chain_code(self, prompt_text: str, file_path: str = "") -> str:

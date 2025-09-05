@@ -4,6 +4,8 @@ import yaml
 import os
 from typing import Dict, Optional
 from jinja2 import Template
+
+from biz.utils.code_parser import GitDiffParser
 from biz.utils.log import logger
 from biz.service.call_chain_analysis.file_util import FileUtil
 from biz.utils.code_wrapper import CodeWrapper
@@ -166,40 +168,33 @@ def generate_assemble_prompt(changed_methods_file: str, code_context_file: str, 
     return ""
 
 
-def generate_assemble_web_prompt(webhook_data, changed_method_signatures_map: dict, workspace_path) -> str:
+def generate_assemble_web_prompt(webhook_data, changes, workspace_path) -> str:
     """生成格式化的提示词字段"""
-    # 加载prompt模板
-    prompts = _load_prompt_templates("conf/prompt_templates.yml")
-    if not prompts:
-        logger.warn("无法加载prompt模板，跳过format字段生成")
-        return ""
 
-    item_prompt_template = prompts.get("item_prompt", "")
-    if not item_prompt_template:
-        logger.warn("未找到item_prompt模板，跳过format字段生成")
-        return ""
+    # 获取便跟代码
+    changed_method_signatures_map = {}
+    for i, change in enumerate(changes):
+        diff_content = change.get('diff', '')
+        file_path = change.get('new_path', '')
 
-    # 为每个变更单独生成format字段
-    for change_index, change_data in changed_method_signatures_map.items():
-        old_code = change_data.get('old_code', '')
-        new_code = change_data.get('new_code', '')
-        file_path = change_data.get('file_path', '')
-        context = change_data.get('content', '')
+        diff_parser = GitDiffParser(diff_content)
+        diff_parser.parse_diff()
 
         # 使用CodeWrapper包裹代码
-        old_code = CodeWrapper.wrap_code_to_md(old_code, file_path)
-        new_code = CodeWrapper.wrap_code_to_md(new_code, file_path)
-        context = CodeWrapper.wrap_code_to_md(context, file_path)
+        new_code = CodeWrapper.wrap_code_to_md(diff_parser.get_new_code(), file_path)
+        changed_method_signatures_map[i] = {
+            'old_code': diff_parser.get_old_code(),
+            'new_code': diff_parser.get_new_code(),
+            'file_path': file_path,
+            'diffs_text': diff_content,
+            'context': '',
+            'language': "web",
+            'prompt': f'文件路径\n{file_path}\ngit代码片段内容\n{new_code}',
+        }
 
-        # 使用Jinja2模板渲染format字段
-        template = Template(item_prompt_template)
-        format_field = template.render(
-            old_code=old_code,
-            new_code=new_code,
-            context=context,
-            file_path=file_path
-        )
-        change_data['prompt'] = format_field
+        # 补充原文
+        # for i, e in changed_method_signatures_map.items():
+        #     e['context']= handler.get_file_content(e['file_path'],webhook_data['object_attributes']['source_branch'])
 
     output_file = _save_format_fields_to_file(changed_method_signatures_map, webhook_data['project']['name'],
                                               workspace_path)

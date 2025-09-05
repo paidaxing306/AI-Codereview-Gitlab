@@ -12,6 +12,9 @@ from biz.utils.code_reviewer import CodeReviewer
 from biz.utils.im import notifier
 from biz.utils.log import logger
 from biz.service.call_chain_analysis.pmd_report_formatter import PMDReportFormatter
+from biz.service.call_chain_analysis.json_to_md import JsonToMdConverter
+from biz.utils.xml_parser import XmlParser
+import json
 
 
 
@@ -46,7 +49,7 @@ def handle_push_event(webhook_data: dict, gitlab_token: str, gitlab_url: str, gi
                     additions += item['additions']
                     deletions += item['deletions']
             # 将review结果提交到Gitlab的 notes
-            handler.add_push_notes(f'Auto Review Result: \n{review_result}')
+            handler.add_push_notes(f'{review_result}')
 
         event_manager['push_reviewed'].send(PushReviewEntity(
             project_name=webhook_data['project']['name'],
@@ -362,14 +365,9 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
     # 遍历changes_prompt_json的value，循环执行代码审查
     logger.info(f"开始处理调用链分析，包含 {len(changes_prompt_json)} 个变更的提示词")
 
-
-
-    # 收集所有需要添加的审查结果
-    review_notes_to_add = []
-    review_notes_to_add.append("## 🧠 AI审查报告")
-    review_notes_to_add.append("| 类名方法名 | 存在的问题 | 问题级别 |")
-    review_notes_to_add.append("|------------|------------|----------|")
-    seen_lines = set()
+    # 第一步：收集所有review_result的JSON数据
+    all_review_results = []
+    
     for change_index, content in changes_prompt_json.items():
         prompt = content['prompt']
         if not prompt or not prompt.strip():  # 确保提示词不为空
@@ -381,61 +379,55 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
         # 执行调用链代码审查
         review_result = CodeReviewer().review_and_analyze_call_chain_code(prompt, content['language'])
 
-        # 根据项目配置过滤问题级别
-        filtered_review_result = _filter_review_result_by_project_level(
-            webhook_data['project']['name'], 
-            review_result
-        )
-
-        # 分割结果并按顺序去重
-        if filtered_review_result and filtered_review_result.strip():
-            result_lines = filtered_review_result.split('\n')
-            if len(result_lines) > 2:
-                result_lines = result_lines[2:]
+        # 解析XML格式的review_result并收集
+        if review_result and review_result.strip():
+            try:
+                items = XmlParser.parse_review_items(review_result)
                 gitlab_url = PMDReportFormatter._convert_to_gitlab_url_by_path(content['file_path'], webhook_data)
-                for line in result_lines:
-                    if line not in seen_lines:
-                        line=format_content(line,gitlab_url)
-                        review_notes_to_add.append(line)
-                        seen_lines.add(line)
+                # 为每个item添加GitLab链接
+                for item in items:
+                    item['name'] = f"[{item['name']}]({gitlab_url})"
+                    all_review_results.append(item)
+                    
+            except Exception as e:
+                logger.error(f"解析XML格式错误 跳过此项: {e}")
 
-    if review_notes_to_add:
-        # 统一添加所有审查结果到GitLab notes
-        handler.add_merge_request_notes('\n'.join(review_notes_to_add))
-        logger.info("调用链分析完成")
-
-
-def format_content(line, target_url):
-    """
-    将格式为 | xxx | 原因 | 级别 | 的字符串，
-    替换为 | [xxx](url) | 原因 | 级别 |
-
-    参数:
-        line: 待处理的字符串（格式如 | xxx | 原因 | 级别 |）
-        target_url: 链接目标地址
-
-    返回:
-        替换后的字符串
-    """
-    # 正则表达式匹配第一列内容，保持其他列不变
-    # 匹配 | 第一列内容 | 并替换为 | [第一列内容](链接) |
-    pattern = r'\| ([^|]+?) \|'
-    # 只替换第一个匹配项（第一列）
-    replaced_line = re.sub(pattern, r'| [\1]({}) |'.format(target_url), line, count=1)
-    return replaced_line
+    # 根据项目配置过滤问题级别
+    filtered_review_result = _filter_review_result_by_project_level(
+            webhook_data['project']['name'],
+            all_review_results)
 
 
 
-def _filter_review_result_by_project_level(project_name: str, review_result: str) -> str:
+
+    # 第二步：循环完成后，生成AI审查报告并发送
+    if filtered_review_result:
+        # 使用工具类生成Markdown格式的AI审查报告
+        ai_review_report = JsonToMdConverter.convert_review_results_to_md(filtered_review_result)
+        handler.add_merge_request_notes(ai_review_report)
+
+        # 问题修正报告
+        ai_review_report = JsonToMdConverter.issue_fix_suggestion_to_md(filtered_review_result)
+        handler.add_merge_request_notes(ai_review_report)
+
+        logger.info(f"调用链分析完成，共处理 {len(filtered_review_result)} 个审查结果")
+    else:
+        logger.info("没有发现需要审查的问题，跳过报告生成")
+
+
+
+
+
+def _filter_review_result_by_project_level(project_name: str, review_results: list) -> list:
     """
     根据项目配置过滤问题级别
     
     Args:
         project_name: 项目名称
-        review_result: 原始审查结果
+        review_results: 审查结果列表，每个元素是包含name、issue、level、content的dict
         
     Returns:
-        过滤后的审查结果
+        过滤后的审查结果列表
     """
     # 获取环境变量配置
     default_level = os.environ.get('CODE_ANALYSIS_CHANGE_AI_LEVEL_DEFAULT', 'LOW')
@@ -456,51 +448,12 @@ def _filter_review_result_by_project_level(project_name: str, review_result: str
     
     # 根据级别过滤结果
     if project_level == 'HIGH':
-        # 显示高
-        return _filter_middle_low_level_issues(review_result)
+        # 只显示高级别问题
+        return [item for item in review_results if '🔴 高' in item.get('level', '')]
     elif project_level == 'MIDDLE':
-        # 显示中高
-        return _filter_low_level_issues(review_result)
+        # 显示中高级别问题
+        return [item for item in review_results if '🔴 高' in item.get('level', '') or '🟡 中' in item.get('level', '')]
     elif project_level == 'LOW':
-                 # 全显示
-         return review_result
+        # 全显示
+        return review_results
 
-
-def _filter_middle_low_level_issues(review_result: str) -> str:
-    """
-    过滤掉中低级别问题，只显示高级别问题
-    
-    Args:
-        review_result: 原始审查结果
-        
-    Returns:
-        过滤后的结果
-    """
-    lines = review_result.split('\n')
-    filtered_lines = []
-    
-    for line in lines:
-        if '🟢 低' not in line and '🟡 中' not in line:
-            filtered_lines.append(line)
-
-    return '\n'.join(filtered_lines)
-
-
-def _filter_low_level_issues(review_result: str) -> str:
-    """
-    过滤掉低级别问题，保留中高级别问题
-    
-    Args:
-        review_result: 原始审查结果
-        
-    Returns:
-        过滤后的结果
-    """
-    lines = review_result.split('\n')
-    filtered_lines = []
-    
-    for line in lines:
-        if '🟢 低' not in line:
-            filtered_lines.append(line)
-    
-    return '\n'.join(filtered_lines)
