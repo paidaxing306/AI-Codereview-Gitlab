@@ -448,26 +448,36 @@ class CallChainAnalysisService:
                 logger.warn("无法加载方法调用关系数据，跳过提交到GitLab")
                 return
 
-            # 为每个变更组生成独立的Mermaid图表
+            # 为每个变更组的每个方法签名生成独立的Mermaid图表
             diagram_sections = []
             
             for change_index, change_data in method_calls_data.items():
                 if isinstance(change_data, dict) and change_data:
-                    # 为单个变更组创建数据
-                    single_change_data = {change_index: change_data}
-                    
-                    # 转换为Mermaid flowchart TD格式
-                    mermaid_diagram = self._convert_to_mermaid_flowchart(single_change_data)
-                    
-                    if mermaid_diagram:
-                        # 创建单个变更组的图表部分
-                        diagram_section = f"""### 📋 变更组 {change_index}
+                    # 为每个方法签名生成独立的图表
+                    for method_signature, method_data in change_data.items():
+                        # 为单个方法签名创建数据
+                        single_method_data = {change_index: {method_signature: method_data}}
+                        
+                        # 转换为Mermaid flowchart TD格式
+                        mermaid_diagram = self._convert_to_mermaid_flowchart(single_method_data)
+                        
+                        if mermaid_diagram:
+                            # 检查图表是否只有一个节点（过滤掉只有自己的图表）
+                            if self._has_meaningful_relationships(mermaid_diagram):
+                                # 获取方法的简短名称用于标题
+                                short_method_name = self._get_short_method_name_for_title(method_signature)
+                                
+                                # 创建单个方法签名的图表部分
+                                diagram_section = f"""### {short_method_name}
 
 ```mermaid
 {mermaid_diagram}
 ```"""
-                        diagram_sections.append(diagram_section)
-                        logger.info(f"变更组 {change_index} 的调用关系图已生成")
+                                diagram_sections.append(diagram_section)
+                                logger.info(f"变更组 {change_index} 中方法 {short_method_name} 的调用关系图已生成")
+                            else:
+                                short_method_name = self._get_short_method_name_for_title(method_signature)
+                                logger.info(f"变更组 {change_index} 中方法 {short_method_name} 只有单个节点，已跳过")
             
             if diagram_sections:
                 # 将所有图表用换行符拼接
@@ -492,6 +502,55 @@ class CallChainAnalysisService:
                 
         except Exception as e:
             logger.error(f"提交方法调用关系图到GitLab时发生错误: {str(e)}")
+
+    def _get_short_method_name_for_title(self, method_signature: str) -> str:
+        """
+        获取适合作为标题的方法名
+        
+        Args:
+            method_signature: 完整的方法签名
+            
+        Returns:
+            简化的方法名，适合作为标题使用
+        """
+        try:
+            if '.' in method_signature:
+                parts = method_signature.split('.')
+                if len(parts) >= 2:
+                    class_name = parts[-2]  # 类名
+                    method_name = parts[-1].split('(')[0]  # 方法名（去掉参数）
+                    return f"{class_name}.{method_name}"
+            return method_signature.split('(')[0]  # 如果没有点，就返回方法名
+        except Exception:
+            # 如果解析失败，返回原始签名
+            return method_signature
+
+    def _has_meaningful_relationships(self, mermaid_diagram: str) -> bool:
+        """
+        检查Mermaid图表是否有有意义的关系（不只是单个节点）
+        
+        Args:
+            mermaid_diagram: Mermaid图表字符串
+            
+        Returns:
+            如果图表有关系连接（箭头），返回True；如果只有单个节点，返回False
+        """
+        try:
+            lines = mermaid_diagram.split('\n')
+            
+            # 统计箭头连接的数量
+            arrow_count = 0
+            for line in lines:
+                line = line.strip()
+                if '-->' in line:
+                    arrow_count += 1
+            
+            # 如果有箭头连接，说明有关系
+            return arrow_count > 0
+            
+        except Exception:
+            # 如果解析失败，默认认为有意义
+            return True
 
     def _convert_to_mermaid_flowchart(self, method_calls_data: dict) -> str:
         """
