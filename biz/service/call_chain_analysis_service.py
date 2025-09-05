@@ -484,7 +484,7 @@ class CallChainAnalysisService:
                 all_diagrams = '\n\n'.join(diagram_sections)
                 
                 # 创建完整的Markdown格式评论
-                method_calls_comment = f"""## 📊 方法调用关系图
+                method_calls_comment = f"""## 📊 变更代码的方法调用关系图
 
 {all_diagrams}
 
