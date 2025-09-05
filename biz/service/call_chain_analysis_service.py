@@ -152,9 +152,8 @@ class CallChainAnalysisService:
             # 4. 分析调用关系产生{workspace/project/3_method_calls.json}
             method_calls_file = analyze_method_calls_static(changed_methods_file, analysis_result_file,
                                                             project_info['name'], self.workspace_path)
-            if not method_calls_file:
-                logger.warn("调用关系分析失败，跳过调用链分析")
-                return None
+            if method_calls_file and handler:
+                 self._submit_method_calls_report_to_gitlab(method_calls_file, handler, webhook_data)
 
             # 5. 生成Java代码输出产生{workspace/project/4_code_context.json}
             code_context_file = format_code_context(method_calls_file, analysis_result_file, project_info['name'],
@@ -431,6 +430,209 @@ class CallChainAnalysisService:
                 
         except Exception as e:
             logger.error(f"提交PMD报告到GitLab时发生错误: {str(e)}")
+
+    def _submit_method_calls_report_to_gitlab(self, method_calls_file: str, handler, webhook_data: dict) -> None:
+        """
+        将方法调用关系转换为Mermaid flowchart TD格式并提交到GitLab
+        每个变更组生成独立的图表
+
+        Args:
+            method_calls_file: 方法调用关系文件路径
+            handler: GitLab handler实例
+            webhook_data: GitLab webhook数据
+        """
+        try:
+            # 加载方法调用关系数据
+            method_calls_data = FileUtil.load_json_from_file(method_calls_file)
+            if not method_calls_data:
+                logger.warn("无法加载方法调用关系数据，跳过提交到GitLab")
+                return
+
+            # 为每个变更组生成独立的Mermaid图表
+            diagram_sections = []
+            
+            for change_index, change_data in method_calls_data.items():
+                if isinstance(change_data, dict) and change_data:
+                    # 为单个变更组创建数据
+                    single_change_data = {change_index: change_data}
+                    
+                    # 转换为Mermaid flowchart TD格式
+                    mermaid_diagram = self._convert_to_mermaid_flowchart(single_change_data)
+                    
+                    if mermaid_diagram:
+                        # 创建单个变更组的图表部分
+                        diagram_section = f"""### 📋 变更组 {change_index}
+
+```mermaid
+{mermaid_diagram}
+```"""
+                        diagram_sections.append(diagram_section)
+                        logger.info(f"变更组 {change_index} 的调用关系图已生成")
+            
+            if diagram_sections:
+                # 将所有图表用换行符拼接
+                all_diagrams = '\n\n'.join(diagram_sections)
+                
+                # 创建完整的Markdown格式评论
+                method_calls_comment = f"""## 📊 方法调用关系图
+
+{all_diagrams}
+
+> 📝 **说明**: 此图展示了变更方法的调用关系，颜色含义：
+> - 🟢 **绿色**: 变更的方法（方法本身）
+> - 🔵 **蓝色**: 调用方（调用该方法的其他方法）
+> - ⚪ **灰色**: 被调用方（该方法调用的其他方法）
+"""
+                
+                # 提交到GitLab
+                handler.add_merge_request_notes(method_calls_comment)
+                logger.info(f"成功提交 {len(diagram_sections)} 个方法调用关系图到GitLab")
+            else:
+                logger.info("没有生成任何方法调用关系图，跳过提交到GitLab")
+                
+        except Exception as e:
+            logger.error(f"提交方法调用关系图到GitLab时发生错误: {str(e)}")
+
+    def _convert_to_mermaid_flowchart(self, method_calls_data: dict) -> str:
+        """
+        将方法调用关系数据转换为Mermaid flowchart TD格式
+
+        Args:
+            method_calls_data: 方法调用关系数据
+
+        Returns:
+            Mermaid flowchart TD格式的字符串
+        """
+        try:
+            mermaid_lines = ["flowchart TD"]
+            node_counter = 0
+            node_mapping = {}  # 方法签名到节点ID的映射
+            root_methods = set()  # 记录所有变更的方法（根方法）
+            
+            def get_node_id(method_signature: str) -> str:
+                """获取或创建节点ID"""
+                nonlocal node_counter
+                if method_signature not in node_mapping:
+                    node_counter += 1
+                    node_mapping[method_signature] = f"N{node_counter}"
+                return node_mapping[method_signature]
+            
+            def get_short_method_name(method_signature: str) -> str:
+                """获取方法的简短名称用于显示"""
+                if '.' in method_signature:
+                    parts = method_signature.split('.')
+                    if len(parts) >= 2:
+                        class_name = parts[-2]  # 类名
+                        method_name = parts[-1].split('(')[0]  # 方法名（去掉参数）
+                        return f"{class_name}.{method_name}"
+                return method_signature.split('(')[0]  # 如果没有点，就返回方法名
+            
+            def add_method_relationships(method_signature: str, method_data: dict, is_root: bool = False):
+                """递归添加方法关系"""
+                current_node_id = get_node_id(method_signature)
+                short_name = get_short_method_name(method_signature)
+                
+                # 添加节点定义
+                mermaid_lines.append(f'    {current_node_id}["{short_name}"]')
+                
+                # 如果是根方法，记录到根方法集合中
+                if is_root:
+                    root_methods.add(method_signature)
+                
+                # 处理calls_out（该方法调用的其他方法 - 被调用方用灰色）
+                calls_out = method_data.get('calls_out', {})
+                for called_method, called_data in calls_out.items():
+                    called_node_id = get_node_id(called_method)
+                    called_short_name = get_short_method_name(called_method)
+                    
+                    mermaid_lines.append(f'    {called_node_id}["{called_short_name}"]')
+                    mermaid_lines.append(f'    {current_node_id} --> {called_node_id}')
+                    
+                    # 递归处理被调用方法的关系（限制深度避免过于复杂）
+                    if isinstance(called_data, dict) and len(mermaid_lines) < 50:  # 限制图的复杂度
+                        add_method_relationships(called_method, called_data)
+                
+                # 处理calls_in（调用该方法的其他方法 - 调用方用蓝色）
+                calls_in = method_data.get('calls_in', {})
+                for caller_method, caller_data in calls_in.items():
+                    caller_node_id = get_node_id(caller_method)
+                    caller_short_name = get_short_method_name(caller_method)
+                    
+                    mermaid_lines.append(f'    {caller_node_id}["{caller_short_name}"]')
+                    mermaid_lines.append(f'    {caller_node_id} --> {current_node_id}')
+                    
+                    # 递归处理调用方法的关系（限制深度避免过于复杂）
+                    if isinstance(caller_data, dict) and len(mermaid_lines) < 50:  # 限制图的复杂度
+                        add_method_relationships(caller_method, caller_data)
+            
+            # 遍历所有变更组，收集根方法并添加关系
+            processed_methods = set()
+            for change_index, change_data in method_calls_data.items():
+                if isinstance(change_data, dict):
+                    for method_signature, method_data in change_data.items():
+                        if method_signature not in processed_methods:
+                            processed_methods.add(method_signature)
+                            add_method_relationships(method_signature, method_data, is_root=True)
+            
+            # 添加样式定义，确保根方法（变更的方法）的绿色样式优先级最高
+            style_lines = []
+            
+            # 首先为所有节点添加默认样式
+            for method_signature, node_id in node_mapping.items():
+                if method_signature in root_methods:
+                    # 变更的方法使用绿色（最高优先级）
+                    style_lines.append(f'    style {node_id} fill:#c8e6c9,stroke:#2e7d32,stroke-width:3px')
+                else:
+                    # 非变更方法根据其在图中的角色确定颜色
+                    # 这里我们需要判断该方法是作为调用方还是被调用方出现的
+                    is_caller = False
+                    is_called = False
+                    
+                    # 检查该方法在图中的角色
+                    for root_method in root_methods:
+                        root_data = None
+                        for change_data in method_calls_data.values():
+                            if isinstance(change_data, dict) and root_method in change_data:
+                                root_data = change_data[root_method]
+                                break
+                        
+                        if root_data:
+                            # 检查是否为被调用方
+                            calls_out = root_data.get('calls_out', {})
+                            if method_signature in calls_out:
+                                is_called = True
+                            
+                            # 检查是否为调用方
+                            calls_in = root_data.get('calls_in', {})
+                            if method_signature in calls_in:
+                                is_caller = True
+                    
+                    # 根据角色设置颜色，调用方优先于被调用方
+                    if is_caller:
+                        style_lines.append(f'    style {node_id} fill:#bbdefb,stroke:#1976d2,stroke-width:2px')
+                    elif is_called:
+                        style_lines.append(f'    style {node_id} fill:#f5f5f5,stroke:#757575,stroke-width:2px')
+            
+            # 将样式添加到mermaid_lines中
+            mermaid_lines.extend(style_lines)
+            
+            # 如果没有生成任何关系，返回空字符串
+            if len(mermaid_lines) <= 1:
+                return ""
+            
+            # 去重并返回结果
+            unique_lines = []
+            seen_lines = set()
+            for line in mermaid_lines:
+                if line not in seen_lines:
+                    unique_lines.append(line)
+                    seen_lines.add(line)
+            
+            return '\n'.join(unique_lines)
+            
+        except Exception as e:
+            logger.error(f"转换方法调用关系为Mermaid格式时发生错误: {str(e)}")
+            return ""
 
 
 

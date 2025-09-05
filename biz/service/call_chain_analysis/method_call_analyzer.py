@@ -171,6 +171,101 @@ class MethodCallAnalyzer:
             "calls_out": called_methods,  # 该方法调用的其他方法（向下调用链）
             "calls_in": caller_methods,    # 调用该方法的方法（向上调用链）
         }
+    
+    def get_nested_method_relationship(self, method_signature: str, max_calls_out: int = 1, max_calls_in: int = 3) -> Dict:
+        """
+        获取方法的嵌套调用关系结构
+        
+        Args:
+            method_signature: 方法签名
+            max_calls_out: 最大调用出去的深度
+            max_calls_in: 最大被调用进来的高度
+            
+        Returns:
+            Dict: 嵌套的调用关系结构
+        """
+        if method_signature not in self.analysis_data["method_signatures"]:
+            raise ValueError(f"方法签名不存在: {method_signature}")
+        
+        # 构建嵌套的calls_out结构
+        calls_out_nested = self._build_nested_calls_out(method_signature, max_calls_out, set())
+        
+        # 构建嵌套的calls_in结构
+        calls_in_nested = self._build_nested_calls_in(method_signature, max_calls_in, set())
+        
+        return {
+            "calls_out": calls_out_nested,
+            "calls_in": calls_in_nested
+        }
+    
+    def _build_nested_calls_out(self, method_signature: str, max_depth: int, visited: set) -> Dict:
+        """
+        递归构建嵌套的calls_out结构
+        
+        Args:
+            method_signature: 当前方法签名
+            max_depth: 剩余深度
+            visited: 已访问的方法集合，防止循环调用
+            
+        Returns:
+            Dict: 嵌套的calls_out结构
+        """
+        if max_depth <= 0 or method_signature in visited:
+            return {}
+        
+        if method_signature not in self.analysis_data["method_signatures"]:
+            return {}
+        
+        visited.add(method_signature)
+        result = {}
+        
+        # 获取当前方法直接调用的方法
+        called_methods = self.analysis_data["method_signatures"][method_signature].get("usage_method_signature_name", [])
+        
+        for called_method in called_methods:
+            # 递归构建每个被调用方法的结构
+            nested_calls_out = self._build_nested_calls_out(called_method, max_depth - 1, visited.copy())
+            nested_calls_in = self._build_nested_calls_in(called_method, max_depth - 1, visited.copy())
+            
+            result[called_method] = {
+                "calls_out": nested_calls_out,
+                "calls_in": nested_calls_in
+            }
+        
+        return result
+    
+    def _build_nested_calls_in(self, method_signature: str, max_depth: int, visited: set) -> Dict:
+        """
+        递归构建嵌套的calls_in结构
+        
+        Args:
+            method_signature: 当前方法签名
+            max_depth: 剩余深度
+            visited: 已访问的方法集合，防止循环调用
+            
+        Returns:
+            Dict: 嵌套的calls_in结构
+        """
+        if max_depth <= 0 or method_signature in visited:
+            return {}
+        
+        visited.add(method_signature)
+        result = {}
+        
+        # 获取调用当前方法的方法
+        callers = self.caller_mapping.get(method_signature, [])
+        
+        for caller in callers:
+            # 递归构建每个调用者方法的结构
+            nested_calls_out = self._build_nested_calls_out(caller, max_depth - 1, visited.copy())
+            nested_calls_in = self._build_nested_calls_in(caller, max_depth - 1, visited.copy())
+            
+            result[caller] = {
+                "calls_out": nested_calls_out,
+                "calls_in": nested_calls_in
+            }
+        
+        return result
 
 
 
@@ -218,8 +313,8 @@ def analyze_method_calls_static(changed_methods_file: str, analysis_file: str, p
                 try:
                     logger.info(f"分析Change {change_index} 的第 {method_count} 个方法: {method_signature}")
                     
-                    # 获取完整的调用关系数据
-                    relationship = analyzer.get_complete_method_relationship(
+                    # 获取嵌套的调用关系数据
+                    relationship = analyzer.get_nested_method_relationship(
                         method_signature=method_signature,
                         max_calls_out=3,
                         max_calls_in=3

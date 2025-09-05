@@ -397,9 +397,6 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
             webhook_data['project']['name'],
             all_review_results)
 
-
-
-
     # 第二步：循环完成后，生成AI审查报告并发送
     if filtered_review_result:
         # 使用工具类生成Markdown格式的AI审查报告
