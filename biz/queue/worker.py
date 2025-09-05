@@ -80,9 +80,10 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
     merge_review_only_protected_branches = os.environ.get('MERGE_REVIEW_ONLY_PROTECTED_BRANCHES_ENABLED', '0') == '1'
     mr_active_target_branches = os.environ.get('MR_ACTIVE_TARGET_BRANCHES', 'prod')
     try:
+        project_name = webhook_data['project']["name"]
         # 解析Webhook数据
         handler = MergeRequestHandler(webhook_data, gitlab_token, gitlab_url)
-        logger.info('Merge Request Hook event received')
+        logger.info(f'Merge Request Hook event received project name is {project_name}')
 
         # 新增：判断是否为draft（草稿）MR
         object_attributes = webhook_data.get('object_attributes', {})
