@@ -148,7 +148,8 @@ def generate_assemble_prompt(changed_methods_file: str, code_context_file: str, 
             # 获取当前变更的Java代码内容
 
             contents= [val for key, val in next(iter(code_context[change_index].values())).items() if key == "self"]
-            context = f"```java\n{"\n\n".join(contents)}\n```"
+            join_contents = "\n\n".join(contents)
+            context = f"```java\n{join_contents}\n```"
 
             # 将结果存储到map中
             change_data['prompt'] = context
