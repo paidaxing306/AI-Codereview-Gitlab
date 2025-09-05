@@ -78,6 +78,7 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
     :return:
     '''
     merge_review_only_protected_branches = os.environ.get('MERGE_REVIEW_ONLY_PROTECTED_BRANCHES_ENABLED', '0') == '1'
+    mr_active_target_branches = os.environ.get('MR_ACTIVE_TARGET_BRANCHES', 'prod')
     try:
         # 解析Webhook数据
         handler = MergeRequestHandler(webhook_data, gitlab_token, gitlab_url)
@@ -95,6 +96,11 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
         # 如果开启了仅review projected branches的，判断当前目标分支是否为projected branches
         if merge_review_only_protected_branches and not handler.target_branch_protected():
             logger.info("Merge Request target branch not match protected branches, ignored.")
+            return
+
+        target_branch =  webhook_data['object_attributes']['target_branch']
+        if target_branch not in mr_active_target_branches:
+            logger.info(f"target_branch {target_branch}  跳过审查 不在env.MR_ACTIVE_TARGET_BRANCHES ")
             return
 
         if handler.action not in ['open', 'update']:

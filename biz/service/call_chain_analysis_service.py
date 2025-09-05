@@ -85,8 +85,8 @@ class CallChainAnalysisService:
             result = service._process_java_changes(webhook_data, github_token, changes, handler)
 
         ### web .js,.html,.vue,.jsx,.tsx
-        if web_changes:
-            result =  service._process_web_changes(webhook_data, changes, handler)
+        # if web_changes:
+        #     result =  service._process_web_changes(webhook_data, changes, handler)
 
         return result
 
