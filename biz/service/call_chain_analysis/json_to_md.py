@@ -127,7 +127,7 @@ class JsonToMdConverter:
             content = result.get('content', '暂无详细内容')
             
             # 格式化单个问题的Markdown
-            section = f"\n## {name}\n{level}\n{issue}\n{content}"
+            section = f"\n## {name}\n{level}\n{issue}\n{content}\n"
             md_sections.append(section)
-        
-        return '## 🧠 AI审查报告 - 问题分析  \n\n'.join(md_sections)
+
+        return "## 🧠 AI审查报告 - 问题分析  "+'\n\n'.join(md_sections)
