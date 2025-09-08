@@ -404,8 +404,8 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
         handler.add_merge_request_notes(ai_review_report)
 
         # 问题修正报告
-        ai_review_report = JsonToMdConverter.issue_fix_suggestion_to_md(filtered_review_result)
-        handler.add_merge_request_notes(ai_review_report)
+        # ai_review_report = JsonToMdConverter.issue_fix_suggestion_to_md(filtered_review_result)
+        # handler.add_merge_request_notes(ai_review_report)
 
         logger.info(f"调用链分析完成，共处理 {len(filtered_review_result)} 个审查结果")
     else:
