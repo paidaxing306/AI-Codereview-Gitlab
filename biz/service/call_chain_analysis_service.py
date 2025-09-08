@@ -152,8 +152,8 @@ class CallChainAnalysisService:
             # 4. 分析调用关系产生{workspace/project/3_method_calls.json}
             method_calls_file = analyze_method_calls_static(changed_methods_file, analysis_result_file,
                                                             project_info['name'], self.workspace_path)
-            # if method_calls_file and handler:  todo 暂时不提交 因为内容过多
-            #      self._submit_method_calls_report_to_gitlab(method_calls_file, handler, webhook_data)
+            if method_calls_file and handler:
+                 self._submit_method_calls_report_to_gitlab(method_calls_file, handler, webhook_data)
 
             # 5. 生成Java代码输出产生{workspace/project/4_code_context.json}
             code_context_file = format_code_context(method_calls_file, analysis_result_file, project_info['name'],
@@ -495,8 +495,8 @@ class CallChainAnalysisService:
 """
                 
                 # 提交到GitLab
-                handler.add_merge_request_notes(method_calls_comment)
-                logger.info(f"成功提交 {len(diagram_sections)} 个方法调用关系图到GitLab")
+                # handler.add_merge_request_notes(method_calls_comment)
+                # logger.info(f"成功提交 {len(diagram_sections)} 个方法调用关系图到GitLab")
             else:
                 logger.info("没有生成任何方法调用关系图，跳过提交到GitLab")
                 
