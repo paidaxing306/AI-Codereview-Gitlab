@@ -224,10 +224,7 @@ class CallChainAnalysisService:
                     # 检查文件是否存在
                     if os.path.exists(full_path):
                         java_files.append(full_path)
-                        if rel_path in changed_java_files:
-                            logger.info(f"添加变更的Java文件到PMD检查列表: {rel_path}")
-                        else:
-                            logger.debug(f"添加项目Java文件到PMD检查列表: {rel_path}")
+
         
         logger.info(f"从整个项目中提取到 {len(java_files)} 个Java文件进行PMD检查，其中 {len(changed_java_files)} 个为变更文件")
         

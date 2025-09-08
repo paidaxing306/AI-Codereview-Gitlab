@@ -509,7 +509,7 @@ class JavaProjectAnalyzer:
     def _analyze_methods_for_class(self, class_content: str, class_signature_name: str,
                                  field_names: List[str]) -> List[str]:
         """分析类中的方法"""
-        methods = self._extract_methods(class_content)
+        methods = self._extract_methods(class_content, class_signature_name)
         method_names = []
 
         for method in methods:
@@ -868,7 +868,7 @@ class JavaProjectAnalyzer:
         for child in node.children:
             self._extract_methods_tree_sitter(child, source, results)
 
-    def _extract_methods(self, class_content: str) -> List[str]:
+    def _extract_methods(self, class_content: str, class_signature_name) -> List[str]:
         """使用 tree-sitter 提取类中的方法定义"""
         try:
             # 将字符串转换为字节
@@ -886,15 +886,13 @@ class JavaProjectAnalyzer:
             methods = []
             self._extract_methods_tree_sitter(root, java_code, methods)
 
-            # 如果没有找到方法，可能是解析有问题，回退到正则表达式
             if not methods:
-                logger.warning("tree-sitter 没有找到方法，回退到正则表达式方法")
-                raise Exception("No methods found")
+                return []
 
             return methods
             
         except Exception as e:
-            logger.warning(f"tree-sitter 解析失败，回退到正则表达式方法: {e}, code = {class_content}")
+            logger.warning(f"tree-sitter 解析失败，回退到正则表达式方法: {e} 类签名如下 {class_signature_name}")
             return []
 
     def _extract_methods_for_interface(self, class_content: str) -> List[str]:
@@ -918,7 +916,6 @@ class JavaProjectAnalyzer:
             
             # 如果没有找到方法，可能是解析有问题，回退到原方法
             if not methods:
-                logger.warning("tree-sitter没有找到接口方法，回退到原方法")
                 return self._extract_methods_for_interface_fallback(class_content)
             
             return methods

@@ -336,8 +336,7 @@ def analyze_method_calls_static(changed_methods_file: str, analysis_file: str, p
             method_signature_jsoncall_map[change_index] = change_method_calls_data
         
         logger.info(f"完成所有变更方法的调用关系分析")
-        logger.info(f"方法调用数据Map: {method_signature_jsoncall_map}")
-        
+
         # 将数据写入临时文件
         output_file = _save_method_calls_to_file(method_signature_jsoncall_map, project_name, workspace_path)
         logger.info(f"方法调用关系数据已保存到: {output_file}")

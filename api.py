@@ -182,7 +182,7 @@ def handle_gitlab_webhook(data):
 
     # 打印整个payload数据，或根据需求进行处理
     logger.info(f'Received event: {object_kind}')
-    logger.info(f'Payload: {json.dumps(data)}')
+    # logger.info(f'Payload: {json.dumps(data)}')
 
     # 处理Merge Request Hook
     if object_kind == "merge_request":

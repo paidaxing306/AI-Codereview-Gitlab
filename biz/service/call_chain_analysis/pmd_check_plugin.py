@@ -158,7 +158,7 @@ class PMDCheckPlugin:
             for keyword in self.skip_filename_keywords:
                 if keyword.lower() in filename.lower():
                     should_skip_file = True
-                    logger.debug(f"跳过包含关键词 '{keyword}' 的文件: {filename}")
+                    # logger.debug(f"跳过包含关键词 '{keyword}' 的文件: {filename}")
                     break
             
             if should_skip_file:
@@ -172,8 +172,7 @@ class PMDCheckPlugin:
                     rule = violation.get('rule', '')
                     if rule not in self.skip_rule_list:
                         filtered_violations.append(violation)
-                    else:
-                        logger.debug(f"跳过规则: {rule}")
+
                 violations = filtered_violations
             
             # 创建新的文件信息
@@ -361,7 +360,7 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, project_name
     min_level = PMDCheckPlugin().get_project_level(project_name)
 
     # 构建命令
-    command = _build_pmd_command(project_path, min_level, plugin_path)
+    command = _build_pmd_command(project_path, plugin_path)
     if not command:
         return None
 
@@ -386,7 +385,7 @@ def run_pmd_check(project_path, output_file=None, plugin_path=None, project_name
     return report_data
 
 
-def _build_pmd_command(project_path, min_level, plugin_path):
+def _build_pmd_command(project_path, plugin_path):
     """构建PMD命令"""
     # 设置PMD路径
     pmd_bin_dir = os.path.join(plugin_path, "pmd-bin-6.55.0", "bin")
@@ -402,7 +401,7 @@ def _build_pmd_command(project_path, min_level, plugin_path):
         "rulesets/java/ali-set.xml"
     ]
     
-    base_args = ["-d", project_path, "--minimum-priority", "3", "-R"] + rulesets + ["-f", "json"]
+    base_args = ["-d", project_path, "--minimum-priority", "2", "-R"] + rulesets + ["-f", "json"]
     
     if os.name == 'nt':  # Windows
         if not os.path.exists(pmd_lib_dir):

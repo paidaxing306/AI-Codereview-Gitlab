@@ -83,7 +83,7 @@ class MethodSignatureExtractor:
             class_content = self.java_analyzer._extract_class_content(formatted_diff, class_start)
             
             # 直接重用JavaProjectAnalyzer的_extract_methods方法提取方法内容
-            extracted_methods = self.java_analyzer._extract_methods(class_content)
+            extracted_methods = self.java_analyzer._extract_methods(class_content, class_signature_name)
 
             # 对每个提取的方法，使用JavaProjectAnalyzer的方法签名提取逻辑
             for method_content in extracted_methods:
