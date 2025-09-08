@@ -224,11 +224,11 @@ class MethodCallAnalyzer:
         
         for called_method in called_methods:
             # 递归构建每个被调用方法的结构
-            nested_calls_out = self._build_nested_calls_out(called_method, max_depth - 1, visited.copy())
+            # nested_calls_out = self._build_nested_calls_out(called_method, max_depth - 1, visited.copy())
             nested_calls_in = self._build_nested_calls_in(called_method, max_depth - 1, visited.copy())
             
             result[called_method] = {
-                "calls_out": nested_calls_out,
+                "calls_out": {},
                 "calls_in": nested_calls_in
             }
         
@@ -257,11 +257,11 @@ class MethodCallAnalyzer:
         
         for caller in callers:
             # 递归构建每个调用者方法的结构
-            nested_calls_out = self._build_nested_calls_out(caller, max_depth - 1, visited.copy())
+            # nested_calls_out = self._build_nested_calls_out(caller, max_depth - 1, visited.copy())
             nested_calls_in = self._build_nested_calls_in(caller, max_depth - 1, visited.copy())
             
             result[caller] = {
-                "calls_out": nested_calls_out,
+                "calls_out": {},
                 "calls_in": nested_calls_in
             }
         
