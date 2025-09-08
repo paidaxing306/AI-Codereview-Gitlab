@@ -104,7 +104,7 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
 
         target_branch =  webhook_data['object_attributes']['target_branch']
         if target_branch not in mr_active_target_branches:
-            logger.info(f"target_branch {target_branch}  跳过审查 不在env.MR_ACTIVE_TARGET_BRANCHES ")
+            logger.info(f"target_branch {target_branch}  跳过审查 不在env.MR_ACTIVE_TARGET_BRANCHES  {mr_active_target_branches} ")
             return
 
         if handler.action not in ['open', 'update']:
