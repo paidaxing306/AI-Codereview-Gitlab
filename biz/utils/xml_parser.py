@@ -51,6 +51,11 @@ class XmlParser:
                 level = XmlParser._get_element_text(item_elem, 'level')
                 content = XmlParser._get_element_text(item_elem, 'content')
                 
+
+                content=content.replace("&lt;", "<")
+                content=content.replace("&gt;", ">")
+                content=content.replace("&amp;", "&")
+ 
                 # 构造dict对象
                 item_dict = {
                     'name': name,
