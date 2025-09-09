@@ -119,9 +119,6 @@ class CallChainAnalysisService:
             # 3. 解析变更的方法签名产生{workspace/project/2_changed_methods.json}
             changed_methods_file = extract_changed_method_signatures_static(changes, project_info['name'],
                                                                             self.workspace_path,analysis_result_file)
-            if not changed_methods_file:
-                logger.info("未发现变更的方法签名，跳过调用链分析")
-                return None
 
             # 3.1 plugin PMD代码检查产生{workspace/project_tmp/plugin_pmd_report_enhanced.json}
             # 从整个Java项目中提取所有Java文件路径，对整个项目进行PMD检查
@@ -137,6 +134,9 @@ class CallChainAnalysisService:
             else:
                 logger.warn("PMD代码检查失败，但不会影响后续调用链分析步骤，继续执行")
 
+            if not changed_methods_file:
+                logger.info("未发现变更的方法签名，跳过调用链分析")
+                return None
 
             # 实现3.2步骤：过滤PMD已检查的方法签名
             filtered_changed_methods_file = self._filter_pmd_checked_methods(
@@ -420,7 +420,7 @@ class CallChainAnalysisService:
 """
                 
                 # 提交到GitLab
-                handler.add_merge_request_notes(pmd_comment)
+                # handler.add_merge_request_notes(pmd_comment)
                 logger.info("PMD报告已成功提交到GitLab")
             else:
                 logger.info("PMD报告为空，跳过提交到GitLab")
@@ -492,8 +492,8 @@ class CallChainAnalysisService:
 """
                 
                 # 提交到GitLab
-                # handler.add_merge_request_notes(method_calls_comment)
-                # logger.info(f"成功提交 {len(diagram_sections)} 个方法调用关系图到GitLab")
+                handler.add_merge_request_notes(method_calls_comment)
+                logger.info(f"成功提交 {len(diagram_sections)} 个方法调用关系图到GitLab")
             else:
                 logger.info("没有生成任何方法调用关系图，跳过提交到GitLab")
                 

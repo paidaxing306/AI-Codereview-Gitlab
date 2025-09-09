@@ -93,8 +93,8 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
         is_draft = object_attributes.get('draft') or object_attributes.get('work_in_progress')
         if is_draft:
             msg = f"[通知] MR为草稿（draft），未触发AI审查。\n项目: {webhook_data['project']['name']}\n作者: {webhook_data['user']['username']}\n源分支: {object_attributes.get('source_branch')}\n目标分支: {object_attributes.get('target_branch')}\n链接: {object_attributes.get('url')}"
-            notifier.send_notification(content=msg)
-            logger.info("MR为draft，仅发送通知，不触发AI review。")
+            # notifier.send_notification(content=msg)
+            logger.info(f"MR为draft，仅log，不触发AI review。 {msg}")
             return
 
         # 如果开启了仅review projected branches的，判断当前目标分支是否为projected branches
