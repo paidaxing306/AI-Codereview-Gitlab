@@ -420,7 +420,7 @@ class CallChainAnalysisService:
 """
                 
                 # 提交到GitLab
-                # handler.add_merge_request_notes(pmd_comment)
+                handler.add_merge_request_notes(pmd_comment)
                 logger.info("PMD报告已成功提交到GitLab")
             else:
                 logger.info("PMD报告为空，跳过提交到GitLab")
@@ -492,7 +492,7 @@ class CallChainAnalysisService:
 """
                 
                 # 提交到GitLab
-                handler.add_merge_request_notes(method_calls_comment)
+                # handler.add_merge_request_notes(method_calls_comment)
                 logger.info(f"成功提交 {len(diagram_sections)} 个方法调用关系图到GitLab")
             else:
                 logger.info("没有生成任何方法调用关系图，跳过提交到GitLab")
