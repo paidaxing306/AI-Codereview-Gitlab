@@ -72,10 +72,10 @@ call_chain_analysis:
       name: 类名字方法名
       issue: 存在具体的的问题(给出问题代码)
       level: 问题级别（🔴 高、🟡 中、🟢 低）
-      content: 问题修改建议(给出建议代码)
+      content: 给出问题代码原文，给出问题修改建议，给出建议代码
       
       ## 输出示例
-      <root><item><name>UserService.getUser()</name><issue>存在具体的的问题(给出问题代码)</issue><level>🔴 高</level><content>问题修改建议(给出建议代码)</content></item></root> 
+      <root><item><name>UserService.getUser()</name><issue>存在具体的的问题(给出问题代码)</issue><level>🔴 高</level><content>问题代码原文，问题修改建议，建议代码</content></item></root> 
 
     web: |-
       # 角色
@@ -115,10 +115,10 @@ call_chain_analysis:
       name: 文件名
       issue: 存在具体的的问题(给出问题代码)
       level: 问题级别（🔴 高、🟡 中、🟢 低）
-      content: 问题修改建议(给出建议代码)
+      content: 给出问题代码原文，给出问题修改建议，给出建议代码
       
       ## 输出示例
-      <root><item><name>UserService.getUser()</name><issue>存在具体的的问题(给出问题代码)</issue><level>🔴 高</level><content>问题修改建议(给出建议代码)</content></item></root> 
+      <root><item><name>UserService.getUser()</name><issue>存在具体的的问题(给出问题代码)</issue><level>🔴 高</level><content>问题代码原文，问题修改建议，建议代码</content></item></root> 
 
   item_prompt: |-
     代码内容：
