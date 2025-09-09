@@ -2,6 +2,7 @@ import os
 import traceback
 from datetime import datetime
 import re
+import random
 from biz.entity.review_entity import MergeRequestReviewEntity, PushReviewEntity,MergeRequestReviewChainEntity
 from biz.event.event_manager import event_manager
 from biz.gitlab.webhook_handler import filter_changes, MergeRequestHandler, PushHandler
@@ -362,13 +363,22 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
         logger.info("没有调用链分析数据，跳过调用链分析")
         return
 
-    # 遍历changes_prompt_json的value，循环执行代码审查
-    logger.info(f"开始处理调用链分析，包含 {len(changes_prompt_json)} 个变更的提示词")
+    # 获取最大处理项目数量配置
+    max_items = int(os.environ.get('CODE_ANALYSIS_MAX_ITEM', '25'))
+    
+    # 如果超过最大数量，随机选择
+    items_to_process = list(changes_prompt_json.items())
+    if len(items_to_process) > max_items:
+        items_to_process = random.sample(items_to_process, max_items)
+        logger.info(f"变更项目数量 {len(changes_prompt_json)} 超过配置上限 {max_items}，随机选择 {max_items} 个进行处理")
+    
+    # 遍历选中的items，循环执行代码审查
+    logger.info(f"开始处理调用链分析，包含 {len(items_to_process)} 个变更的提示词")
 
     # 第一步：收集所有review_result的JSON数据
     all_review_results = []
     
-    for change_index, content in changes_prompt_json.items():
+    for change_index, content in items_to_process:
         prompt = content['prompt']
         if not prompt or not prompt.strip():  # 确保提示词不为空
             logger.info(f"Change {change_index} 的提示词为空，跳过处理")

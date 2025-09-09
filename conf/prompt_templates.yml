@@ -75,7 +75,7 @@ call_chain_analysis:
       content: 给出问题代码原文，给出问题修改建议，给出建议代码
       
       ## 输出示例
-      <root><item><name>UserService.getUser()</name><issue>存在具体的的问题(给出问题代码)</issue><level>🔴 高</level><content>问题代码原文，问题修改建议，建议代码</content></item></root> 
+      <root><item><name>UserService.getUser()</name><issue>存在具体的的问题(给出问题代码)</issue><level>🔴 高</level><content>(此项内容使用markdown格式)问题代码原文，问题修改建议，建议代码</content></item></root> 
 
     web: |-
       # 角色
@@ -109,6 +109,7 @@ call_chain_analysis:
       
       ## 要求
       1. 给出问题时，可能是问题的问题不用给出，给出确定是问题的问题
+      2. 
       
       ## 输出格式:
       以xml格式输出分析报告：
@@ -118,7 +119,7 @@ call_chain_analysis:
       content: 给出问题代码原文，给出问题修改建议，给出建议代码
       
       ## 输出示例
-      <root><item><name>UserService.getUser()</name><issue>存在具体的的问题(给出问题代码)</issue><level>🔴 高</level><content>问题代码原文，问题修改建议，建议代码</content></item></root> 
+      <root><item><name>UserService.getUser()</name><issue>存在具体的的问题(给出问题代码)</issue><level>🔴 高</level><content>(此项内容使用markdown格式)问题代码原文，问题修改建议，建议代码</content></item></root> 
 
   item_prompt: |-
     代码内容：
