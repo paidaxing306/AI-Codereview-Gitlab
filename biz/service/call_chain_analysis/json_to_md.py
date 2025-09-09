@@ -29,7 +29,7 @@ class JsonToMdConverter:
         
         # 构建Markdown表格
         md_lines = []
-        md_lines.append("## 🧠 AI审查报告")
+        md_lines.append("## 🧠 AI审查报告 - 汇总")
         md_lines.append("| 类名方法名 | 存在的问题 | 问题级别 |")
         md_lines.append("|------------|------------|----------|")
         
@@ -130,4 +130,4 @@ class JsonToMdConverter:
             section = f"\n## {name}\n{level}\n{issue}\n{content}\n"
             md_sections.append(section)
 
-        return "## 🧠 AI审查报告 - 问题分析  "+'\n\n'.join(md_sections)
+        return "## 🧠 AI审查报告 - 明细  "+'\n\n'.join(md_sections)
