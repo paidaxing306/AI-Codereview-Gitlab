@@ -364,7 +364,7 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
         return
 
     # 获取最大处理项目数量配置
-    max_items = int(os.environ.get('CODE_ANALYSIS_MAX_ITEM', '25'))
+    max_items = int(os.environ.get('CODE_ANALYSIS_MAX_ITEM', '20'))
     
     # 如果超过最大数量，随机选择
     items_to_process = list(changes_prompt_json.items())
