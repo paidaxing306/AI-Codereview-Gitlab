@@ -384,7 +384,7 @@ def _process_change_analysis(webhook_data: dict, gitlab_token: str, changes: lis
             logger.info(f"Change {change_index} 的提示词为空，跳过处理")
             continue
             
-        logger.info(f"开始处理Change {change_index} 的调用链分析")
+        logger.info(f"开始AI分析Change {change_index}")
 
         # 执行调用链代码审查
         review_result = CodeReviewer().review_and_analyze_call_chain_code(prompt, content['language'])

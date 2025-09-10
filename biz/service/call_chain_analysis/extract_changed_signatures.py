@@ -52,7 +52,7 @@ class ChangedSignatureExtractor:
                 diff_content = change.get('diff', '')
                 file_path = change.get('new_path', '')
                 
-                logger.info(f"解析第 {i+1} 个Java文件变更: {file_path}")
+                logger.debug(f"解析第 {i+1} 个Java文件变更: {file_path}")
                 
 
                 # 解析diff获取变更前后的代码
@@ -76,11 +76,11 @@ class ChangedSignatureExtractor:
                     }
                     logger.info(f"Change {i} 的方法签名: {method_signatures}")
                 else:
-                    logger.info(f"Change {i} 未解析到方法签名")
+                    logger.debug(f"Change {i} 未解析到方法签名")
 
             if changed_method_signatures_map:
                 logger.info(f"成功解析出 {len(changed_method_signatures_map)} 个变更的方法签名")
-                logger.info(f"变更的方法签名Map: {changed_method_signatures_map}")
+                logger.debug(f"变更的方法签名Map: {changed_method_signatures_map}")
                 
                 # 将数据写入临时文件
                 output_file = self._save_changed_methods_to_file(changed_method_signatures_map, project_name)
@@ -335,11 +335,11 @@ class ChangedSignatureExtractor:
                     
                     # 直接比较标准化后的路径
                     if normalized_class_path == relative_path:
-                        logger.info(f"找到匹配的类路径: {normalized_class_path}")
+                        logger.debug(f"找到匹配的类路径: {normalized_class_path}")
                         return class_signature_name
                     # 也尝试匹配文件名
                     elif os.path.basename(normalized_class_path) == os.path.basename(relative_path):
-                        logger.info(f"通过文件名找到匹配的类: {class_signature_name}")
+                        logger.debug(f"通过文件名找到匹配的类: {class_signature_name}")
                         return class_signature_name
             
             logger.warn(f"未找到匹配的类签名，相对路径: {relative_path}")

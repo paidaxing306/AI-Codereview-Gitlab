@@ -104,6 +104,8 @@ class GitUtil:
                     ['git', 'config', '--global', 'core.longpaths', 'true'],
                     capture_output=True,
                     text=True,
+                    encoding='utf-8',
+                    errors='ignore',
                     timeout=30
                 )
                 # 配置Git使用Windows长路径API
@@ -111,6 +113,8 @@ class GitUtil:
                     ['git', 'config', '--global', 'core.protectNTFS', 'false'],
                     capture_output=True,
                     text=True,
+                    encoding='utf-8',
+                    errors='ignore',
                     timeout=30
                 )
             
@@ -284,7 +288,7 @@ class GitUtil:
     @staticmethod
     def _update_existing_repository(repo_path: str, branch_name: str) -> Tuple[bool, str]:
         """
-        更新已存在的仓库：切换到指定分支并拉取最新代码
+        更新已存在的仓库：获取远程最新分支信息，强制丢弃本地变更并切换到指定分支
         
         Args:
             repo_path: 仓库路径
@@ -296,7 +300,57 @@ class GitUtil:
         try:
             logger.info(f"正在更新已存在的仓库: {repo_path}")
             
-            # 1. 切换到指定分支
+            # 1. 获取远程最新分支信息
+            logger.info("获取远程最新分支信息")
+            logger.info("执行git命令: git fetch origin")
+            fetch_result = subprocess.run(
+                ['git', 'fetch', 'origin'],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                timeout=60
+            )
+            
+            if fetch_result.returncode != 0:
+                error_msg = f"获取远程分支信息失败: {fetch_result.stderr}"
+                logger.error(error_msg)
+                return False, error_msg
+            
+            # 2. 强制丢弃本地所有变更
+            logger.info("强制丢弃本地所有变更")
+            logger.info("执行git命令: git reset --hard HEAD")
+            reset_result = subprocess.run(
+                ['git', 'reset', '--hard', 'HEAD'],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                timeout=30
+            )
+            
+            if reset_result.returncode != 0:
+                logger.warn(f"重置本地变更失败: {reset_result.stderr}")
+            
+            # 3. 清理未跟踪的文件
+            logger.info("清理未跟踪的文件")
+            logger.info("执行git命令: git clean -fd")
+            clean_result = subprocess.run(
+                ['git', 'clean', '-fd'],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                timeout=30
+            )
+            
+            if clean_result.returncode != 0:
+                logger.warn(f"清理未跟踪文件失败: {clean_result.stderr}")
+            
+            # 4. 切换到指定分支
             logger.info(f"切换到分支: {branch_name}")
             logger.info(f"执行git命令: git checkout {branch_name}")
             checkout_result = subprocess.run(
@@ -304,18 +358,22 @@ class GitUtil:
                 cwd=repo_path,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='ignore',
                 timeout=30
             )
             
             if checkout_result.returncode != 0:
-                # 如果分支不存在，尝试创建并切换到该分支
-                logger.info(f"分支 {branch_name} 不存在，尝试创建并切换")
-                logger.info(f"执行git命令: git checkout -b {branch_name}")
+                # 如果分支不存在，尝试从远程创建
+                logger.info(f"本地分支 {branch_name} 不存在，尝试从远程创建")
+                logger.info(f"执行git命令: git checkout -b {branch_name} origin/{branch_name}")
                 checkout_result = subprocess.run(
-                    ['git', 'checkout', '-b', branch_name],
+                    ['git', 'checkout', '-b', branch_name, f'origin/{branch_name}'],
                     cwd=repo_path,
                     capture_output=True,
                     text=True,
+                    encoding='utf-8',
+                    errors='ignore',
                     timeout=30
                 )
                 
@@ -324,22 +382,23 @@ class GitUtil:
                     logger.error(error_msg)
                     return False, error_msg
             
-            # 2. 拉取最新代码
-            logger.info(f"拉取最新代码")
-            logger.info(f"执行git命令: git pull origin {branch_name}")
-            pull_result = subprocess.run(
-                ['git', 'pull', 'origin', branch_name],
+            # 5. 强制重置到远程分支最新状态
+            logger.info(f"重置到远程分支最新状态")
+            logger.info(f"执行git命令: git reset --hard origin/{branch_name}")
+            reset_remote_result = subprocess.run(
+                ['git', 'reset', '--hard', f'origin/{branch_name}'],
                 cwd=repo_path,
                 capture_output=True,
                 text=True,
-                timeout=60
+                encoding='utf-8',
+                errors='ignore',
+                timeout=30
             )
             
-            if pull_result.returncode != 0:
-                logger.warn(f"拉取代码失败: {pull_result.stderr}")
-                # 拉取失败不影响整体流程，继续执行
+            if reset_remote_result.returncode != 0:
+                logger.warn(f"重置到远程分支失败: {reset_remote_result.stderr}")
             else:
-                logger.info("代码拉取成功")
+                logger.info("成功重置到远程分支最新状态")
             
             return True, ""
             
